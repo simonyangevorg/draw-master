@@ -70,8 +70,8 @@ export class TournamentsController {
   @Post('tournaments/:id/participants')
   @HttpCode(201)
   @UseGuards(JwtGuard)
-  enroll(@Param('id') id: string, @Body() dto: EnrollParticipantDto) {
-    return this.tournamentsService.enroll(id, dto);
+  enroll(@Param('id') id: string, @Body() dto: EnrollParticipantDto, @CurrentUser() user: any) {
+    return this.tournamentsService.enroll(id, dto, user.sub);
   }
 
   @Patch('tournaments/:id/participants/:pid/approve')

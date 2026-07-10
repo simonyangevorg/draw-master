@@ -233,14 +233,14 @@ describe('TournamentsService', () => {
     it('throws BadRequestException when tournament is not OPEN', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' }));
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' })).rejects.toThrow(BadRequestException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'p1')).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when tournament is full', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 4 }));
       mockParticipantsRepo.count.mockResolvedValue(4);
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' })).rejects.toThrow(BadRequestException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'p1')).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when player is already enrolled', async () => {
@@ -248,7 +248,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.count.mockResolvedValue(0);
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant());
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' })).rejects.toThrow(BadRequestException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'p1')).rejects.toThrow(BadRequestException);
     });
 
     it('sets status to APPROVED when requiresApproval is false', async () => {
@@ -258,7 +258,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.create.mockImplementation((data) => data);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.enroll('tournament-1', { playerId: 'p1' });
+      const result = await service.enroll('tournament-1', { playerId: 'p1' }, 'p1');
 
       expect(result.status).toBe('APPROVED');
     });
@@ -270,9 +270,27 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.create.mockImplementation((data) => data);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.enroll('tournament-1', { playerId: 'p1' });
+      const result = await service.enroll('tournament-1', { playerId: 'p1' }, 'p1');
 
       expect(result.status).toBe('PENDING');
+    });
+
+    it('throws ForbiddenException when requester enrolls a different player', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'someone-else')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows the tournament organiser to enroll another player', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ organiserId: 'organiser-1' }));
+      mockParticipantsRepo.count.mockResolvedValue(0);
+      mockParticipantsRepo.findOne.mockResolvedValue(null);
+      mockParticipantsRepo.create.mockImplementation((data) => data);
+      mockParticipantsRepo.save.mockImplementation(async (p) => p);
+
+      const result = await service.enroll('tournament-1', { playerId: 'p1' }, 'organiser-1');
+
+      expect(result.status).toBe('APPROVED');
     });
   });
 

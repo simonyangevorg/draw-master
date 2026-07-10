@@ -99,8 +99,11 @@ export class TournamentsService {
     return records.map((p: ParticipantEntity) => ({ tournamentId: p.tournamentId, participantId: p.id, status: p.status }));
   }
 
-  async enroll(tournamentId: string, dto: EnrollParticipantDto) {
+  async enroll(tournamentId: string, dto: EnrollParticipantDto, requesterId: string) {
     const t = await this.findOne(tournamentId);
+    if (dto.playerId !== requesterId && t.organiserId !== requesterId) {
+      throw new ForbiddenException('Cannot enroll another player');
+    }
     if (t.status !== 'OPEN') throw new BadRequestException('Tournament is not open for registration');
     const approved = await this.participantsRepo.count({ where: { tournamentId, status: 'APPROVED' } });
     if (approved >= t.maxParticipants) throw new BadRequestException('Tournament is full');
