@@ -1,9 +1,12 @@
 import {
-  Controller, Post, Get, Body, UseGuards, Req, Res, HttpCode,
+  Controller, Post, Patch, Get, Body, Param, UseGuards, Req, Res, HttpCode,
+  ForbiddenException,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { JwtGuard } from './jwt.guard';
 import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
@@ -22,6 +25,8 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }
@@ -30,6 +35,15 @@ export class AuthController {
   @UseGuards(JwtGuard)
   me(@Req() req: Request) {
     return this.authService.getMe(req['user'].sub);
+  }
+
+  @Patch('users/:id/role')
+  @UseGuards(JwtGuard)
+  updateRole(@Req() req: Request, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    if (req['user'].role !== 'ORGANISER') {
+      throw new ForbiddenException('Only an ORGANISER can change user roles');
+    }
+    return this.authService.updateRole(id, dto);
   }
 
   /**

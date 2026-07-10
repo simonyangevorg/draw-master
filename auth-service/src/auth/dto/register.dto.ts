@@ -12,8 +12,9 @@ export class RegisterDto {
   @MinLength(6)
   password: string;
 
-  @IsIn(['ORGANISER', 'MEMBER', 'GUEST'])
-  role: 'ORGANISER' | 'MEMBER' | 'GUEST';
+  @IsOptional()
+  @IsIn(['MEMBER', 'GUEST'])
+  role?: 'MEMBER' | 'GUEST';
 
   @IsOptional()
   @IsString()

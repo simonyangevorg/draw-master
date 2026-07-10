@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set('trust proxy', 1); // nginx sets X-Forwarded-For; trust one hop so ThrottlerGuard keys on the real client IP
   app.enableCors();
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
   await app.listen(8000);

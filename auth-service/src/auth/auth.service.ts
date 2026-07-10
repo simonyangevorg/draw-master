@@ -11,6 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import { UserEntity } from './entities/user.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { JwtPayload } from './interfaces/user.interface';
 
 @Injectable()
@@ -29,13 +30,23 @@ export class AuthService {
     const user = this.usersRepo.create({
       email: dto.email,
       name: dto.name,
-      role: dto.role,
+      role: dto.role ?? 'MEMBER',
       clubId: dto.clubId ?? null,
       passwordHash,
     });
     await this.usersRepo.save(user);
 
     return this.buildResponse(user);
+  }
+
+  async updateRole(userId: string, dto: UpdateRoleDto) {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    user.role = dto.role;
+    await this.usersRepo.save(user);
+
+    return this.sanitize(user);
   }
 
   async login(dto: LoginDto) {

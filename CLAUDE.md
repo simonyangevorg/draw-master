@@ -30,21 +30,23 @@ Full-stack tennis tournament management platform. NestJS microservices backend, 
 
 ## Service Map
 
-| Service | Host Port | Internal Port | DB | Notes |
-|---|---|---|---|---|
-| api-gateway (Nginx) | 80 | 80 | — | JWT gate, routes all `/api/*` |
-| auth-service | 8006 | 8000 | auth | Register/login, `/auth/validate` for Nginx |
-| player-service | 8001 | 8000 | players | Player CRUD, Redis cache, publishes RabbitMQ events |
-| tournament-service | 8002 | 8000 | tournaments | Full tournament lifecycle (see below) |
-| match-service | 8003 | 8000 | matches | Match management |
-| stats-service | 8004 | 8000 | stats | Consumes `match.completed` from RabbitMQ |
-| notification-service | 8005 | 8000 | notifications | Consumes RabbitMQ events |
-| frontend | 3000 | 3000 | — | React + Vite |
+Only `api-gateway` is exposed to the host (port `80`). All other services and infra are reachable only on Docker's internal network — access them via the gateway or `docker compose exec`.
 
-**Infrastructure:**
-- PostgreSQL: `localhost:5432` — user `tennis`, password `tennis_secret`
-- Redis: `localhost:6379`
-- RabbitMQ: `localhost:5672` — user `tennis`, password `tennis_secret` — Management UI at `localhost:15672`
+| Service | Internal Port | DB | Notes |
+|---|---|---|---|
+| api-gateway (Nginx) | 80 (host: 80) | — | JWT gate, routes all `/api/*` |
+| auth-service | 8000 | auth | Register/login, `/auth/validate` for Nginx |
+| player-service | 8000 | players | Player CRUD, Redis cache, publishes RabbitMQ events |
+| tournament-service | 8000 | tournaments | Full tournament lifecycle (see below) |
+| match-service | 8000 | matches | Match management |
+| stats-service | 8000 | stats | Consumes `match.completed` from RabbitMQ |
+| notification-service | 8000 | notifications | Consumes RabbitMQ events |
+| frontend | 3000 | — | React + Vite |
+
+**Infrastructure:** (internal-only — no host ports)
+- PostgreSQL: `postgres:5432` — credentials in `.env`
+- Redis: `redis:6379`
+- RabbitMQ: `rabbitmq:5672` — credentials in `.env` — Management UI at `rabbitmq:15672` (internal only)
 
 ---
 
