@@ -1,0 +1,3 @@
+[submodule "avengers-team"]
+	path = avengers-team
+	url = https://github.com/arm-yan/avengers-team.git
