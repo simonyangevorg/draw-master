@@ -1,35 +1,26 @@
 import { Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CreateNotificationDto } from './dto/create-notification.dto';
-
-export interface Notification {
-  id: string;
-  sentAt: string;
-  status: 'sent';
-  recipientId: string;
-  channel: string;
-  subject: string;
-  body: string;
-  metadata?: Record<string, unknown>;
-}
+import { NotificationEntity } from './entities/notification.entity';
 
 @Injectable()
 export class NotificationsService {
-  private readonly notifications: Notification[] = [];
+  constructor(
+    @InjectRepository(NotificationEntity)
+    private readonly notificationsRepo: Repository<NotificationEntity>,
+  ) {}
 
-  send(dto: CreateNotificationDto): Notification {
-    const record: Notification = {
-      id: uuidv4(),
-      sentAt: new Date().toISOString(),
+  send(dto: CreateNotificationDto): Promise<NotificationEntity> {
+    const record = this.notificationsRepo.create({
       status: 'sent',
       ...dto,
-    };
-    this.notifications.push(record);
+    });
     // TODO: integrate with SendGrid / Twilio / FCM
-    return record;
+    return this.notificationsRepo.save(record);
   }
 
-  findByRecipient(recipientId: string): Notification[] {
-    return this.notifications.filter(n => n.recipientId === recipientId);
+  findByRecipient(recipientId: string): Promise<NotificationEntity[]> {
+    return this.notificationsRepo.find({ where: { recipientId } });
   }
 }

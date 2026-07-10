@@ -1,38 +1,29 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CreateMatchDto } from './dto/create-match.dto';
-import { UpdateScoreDto, SetScore } from './dto/update-score.dto';
-
-export interface Match {
-  id: string;
-  tournamentId: string;
-  player1Id: string;
-  player2Id: string;
-  court?: string;
-  scheduledAt?: string;
-  score: SetScore[];
-  winnerId: string | null;
-  status: 'scheduled' | 'in_progress' | 'completed';
-}
+import { UpdateScoreDto } from './dto/update-score.dto';
+import { MatchEntity } from './entities/match.entity';
 
 @Injectable()
 export class MatchesService {
-  private readonly matches = new Map<string, Match>();
+  constructor(
+    @InjectRepository(MatchEntity)
+    private readonly matchesRepo: Repository<MatchEntity>,
+  ) {}
 
-  findAll(tournamentId?: string): Match[] {
-    const all = [...this.matches.values()];
-    return tournamentId ? all.filter(m => m.tournamentId === tournamentId) : all;
+  findAll(tournamentId?: string): Promise<MatchEntity[]> {
+    return this.matchesRepo.find(tournamentId ? { where: { tournamentId } } : {});
   }
 
-  findOne(id: string): Match {
-    const match = this.matches.get(id);
+  async findOne(id: string): Promise<MatchEntity> {
+    const match = await this.matchesRepo.findOne({ where: { id } });
     if (!match) throw new NotFoundException('Match not found');
     return match;
   }
 
-  create(dto: CreateMatchDto): Match {
-    const match: Match = {
-      id: uuidv4(),
+  create(dto: CreateMatchDto): Promise<MatchEntity> {
+    const match = this.matchesRepo.create({
       tournamentId: dto.tournamentId,
       player1Id: dto.player1Id,
       player2Id: dto.player2Id,
@@ -41,13 +32,12 @@ export class MatchesService {
       score: [],
       winnerId: null,
       status: 'scheduled',
-    };
-    this.matches.set(match.id, match);
-    return match;
+    });
+    return this.matchesRepo.save(match);
   }
 
-  updateScore(id: string, dto: UpdateScoreDto): Match {
-    const match = this.findOne(id);
+  async updateScore(id: string, dto: UpdateScoreDto): Promise<MatchEntity> {
+    const match = await this.findOne(id);
     if (match.status === 'completed') {
       throw new BadRequestException('Match already completed');
     }
@@ -65,6 +55,6 @@ export class MatchesService {
       match.status = 'in_progress';
     }
 
-    return match;
+    return this.matchesRepo.save(match);
   }
 }

@@ -1,24 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { MatchResultDto } from './dto/match-result.dto';
 import { SeedingRequestDto } from './dto/seeding-request.dto';
+import { PlayerStatsEntity } from './entities/player-stats.entity';
+import { H2HEntity } from './entities/h2h.entity';
 
-interface PlayerStats {
-  matchesPlayed: number;
-  wins: number;
-  losses: number;
-  setsWon: number;
-  setsLost: number;
-  surfaceWins: Record<string, number>;
-  tournamentWins: number;
-}
-
-interface H2HRecord {
-  wins: number;
-  losses: number;
-}
-
-function defaultStats(): PlayerStats {
+function defaultStats(playerId: string): Partial<PlayerStatsEntity> {
   return {
+    playerId,
     matchesPlayed: 0,
     wins: 0,
     losses: 0,
@@ -31,29 +21,32 @@ function defaultStats(): PlayerStats {
 
 @Injectable()
 export class StatsService {
-  private readonly stats = new Map<string, PlayerStats>();
-  private readonly h2h = new Map<string, H2HRecord>(); // key: "playerId:opponentId"
+  constructor(
+    @InjectRepository(PlayerStatsEntity)
+    private readonly statsRepo: Repository<PlayerStatsEntity>,
+    @InjectRepository(H2HEntity)
+    private readonly h2hRepo: Repository<H2HEntity>,
+  ) {}
 
-  private getStats(playerId: string): PlayerStats {
-    if (!this.stats.has(playerId)) this.stats.set(playerId, defaultStats());
-    return this.stats.get(playerId);
+  private async getOrCreateStats(playerId: string): Promise<PlayerStatsEntity> {
+    const existing = await this.statsRepo.findOne({ where: { playerId } });
+    if (existing) return existing;
+    return this.statsRepo.save(this.statsRepo.create(defaultStats(playerId)));
   }
 
-  private h2hKey(a: string, b: string): string {
-    return `${a}:${b}`;
+  private async getOrCreateH2H(playerId: string, opponentId: string): Promise<H2HEntity> {
+    const existing = await this.h2hRepo.findOne({ where: { playerId, opponentId } });
+    if (existing) return existing;
+    return this.h2hRepo.save(this.h2hRepo.create({ playerId, opponentId, wins: 0, losses: 0 }));
   }
 
-  private getH2H(a: string, b: string): H2HRecord {
-    const key = this.h2hKey(a, b);
-    if (!this.h2h.has(key)) this.h2h.set(key, { wins: 0, losses: 0 });
-    return this.h2h.get(key);
-  }
-
-  recordResult(dto: MatchResultDto): { recorded: string } {
+  async recordResult(dto: MatchResultDto): Promise<{ recorded: string }> {
     const loserId = dto.winnerId === dto.player1Id ? dto.player2Id : dto.player1Id;
 
-    const winnerStats = this.getStats(dto.winnerId);
-    const loserStats = this.getStats(loserId);
+    const p1Stats = await this.getOrCreateStats(dto.player1Id);
+    const p2Stats = await this.getOrCreateStats(dto.player2Id);
+    const winnerStats = dto.winnerId === dto.player1Id ? p1Stats : p2Stats;
+    const loserStats = dto.winnerId === dto.player1Id ? p2Stats : p1Stats;
 
     winnerStats.matchesPlayed++;
     winnerStats.wins++;
@@ -61,44 +54,46 @@ export class StatsService {
     loserStats.losses++;
 
     for (const set of dto.sets) {
-      this.getStats(dto.player1Id).setsWon += set.p1;
-      this.getStats(dto.player1Id).setsLost += set.p2;
-      this.getStats(dto.player2Id).setsWon += set.p2;
-      this.getStats(dto.player2Id).setsLost += set.p1;
+      p1Stats.setsWon += set.p1;
+      p1Stats.setsLost += set.p2;
+      p2Stats.setsWon += set.p2;
+      p2Stats.setsLost += set.p1;
     }
 
     if (dto.surface && dto.surface in winnerStats.surfaceWins) {
       winnerStats.surfaceWins[dto.surface]++;
     }
 
-    this.getH2H(dto.winnerId, loserId).wins++;
-    this.getH2H(loserId, dto.winnerId).losses++;
+    await this.statsRepo.save([p1Stats, p2Stats]);
+
+    const winnerH2H = await this.getOrCreateH2H(dto.winnerId, loserId);
+    winnerH2H.wins++;
+    const loserH2H = await this.getOrCreateH2H(loserId, dto.winnerId);
+    loserH2H.losses++;
+    await this.h2hRepo.save([winnerH2H, loserH2H]);
 
     return { recorded: dto.matchId };
   }
 
-  getPlayerStats(playerId: string) {
-    const s = this.getStats(playerId);
+  async getPlayerStats(playerId: string) {
+    const s = await this.getOrCreateStats(playerId);
     const winRate = s.matchesPlayed > 0
       ? Math.round((s.wins / s.matchesPlayed) * 1000) / 1000
       : 0;
-    return { playerId, ...s, winRate };
+    return { ...s, winRate };
   }
 
-  getH2HRecord(playerId: string, opponentId: string) {
-    return {
-      playerId,
-      opponentId,
-      ...this.getH2H(playerId, opponentId),
-    };
+  async getH2HRecord(playerId: string, opponentId: string) {
+    const h = await this.getOrCreateH2H(playerId, opponentId);
+    return { playerId: h.playerId, opponentId: h.opponentId, wins: h.wins, losses: h.losses };
   }
 
-  computeSeedings(dto: SeedingRequestDto): Record<string, number> {
-    const scored = dto.playerIds.map(pid => {
-      const s = this.getStats(pid);
+  async computeSeedings(dto: SeedingRequestDto): Promise<Record<string, number>> {
+    const scored = await Promise.all(dto.playerIds.map(async (pid) => {
+      const s = await this.getOrCreateStats(pid);
       const winRate = s.matchesPlayed > 0 ? s.wins / s.matchesPlayed : 0;
       return { pid, winRate, totalWins: s.wins };
-    });
+    }));
 
     scored.sort((a, b) =>
       b.winRate !== a.winRate ? b.winRate - a.winRate : b.totalWins - a.totalWins,
