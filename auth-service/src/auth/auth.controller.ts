@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtGuard } from './jwt.guard';
 import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
@@ -29,6 +30,12 @@ export class AuthController {
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Post('refresh')
+  @HttpCode(200)
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto);
   }
 
   @Get('me')

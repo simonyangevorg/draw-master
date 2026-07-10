@@ -12,6 +12,7 @@ import { UserEntity } from './entities/user.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtPayload } from './interfaces/user.interface';
 
 @Injectable()
@@ -65,6 +66,21 @@ export class AuthService {
     return this.sanitize(user);
   }
 
+  async refresh(dto: RefreshTokenDto) {
+    let payload: { sub: string; type?: string };
+    try {
+      payload = this.jwtService.verify(dto.refreshToken);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+    if (payload.type !== 'refresh') throw new UnauthorizedException('Invalid refresh token');
+
+    const user = await this.usersRepo.findOne({ where: { id: payload.sub } });
+    if (!user) throw new UnauthorizedException('Invalid refresh token');
+
+    return this.buildResponse(user);
+  }
+
   private buildResponse(user: UserEntity) {
     const payload: JwtPayload = {
       sub: user.id,
@@ -72,8 +88,9 @@ export class AuthService {
       name: user.name,
       role: user.role,
     };
-    const token = this.jwtService.sign(payload);
-    return { token, user: this.sanitize(user) };
+    const token = this.jwtService.sign(payload, { expiresIn: '1h' });
+    const refreshToken = this.jwtService.sign({ sub: user.id, type: 'refresh' }, { expiresIn: '30d' });
+    return { token, refreshToken, user: this.sanitize(user) };
   }
 
   private sanitize(user: UserEntity) {

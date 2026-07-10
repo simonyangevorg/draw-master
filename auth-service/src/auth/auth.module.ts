@@ -12,7 +12,7 @@ import { UserEntity } from './entities/user.entity';
     TypeOrmModule.forFeature([UserEntity]),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'fptc_super_secret_change_in_prod',
-      signOptions: { expiresIn: '7d' },
+      signOptions: { expiresIn: '1h' },
     }),
     // 5 login attempts per IP per 60s — see @Throttle() on AuthController#login
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 5 }]),
