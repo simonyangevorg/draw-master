@@ -81,6 +81,7 @@ export class TournamentsService {
   async remove(id: string, organiserId: string) {
     const t = await this.findOne(id);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+    if (t.status === 'IN_PROGRESS') throw new BadRequestException('Cannot delete a tournament that is in progress');
     await this.tournamentsRepo.remove(t);
     this.auditLogger.record({ actorId: organiserId, action: 'TOURNAMENT_DELETED', targetId: id });
   }
@@ -88,6 +89,7 @@ export class TournamentsService {
   async open(id: string, organiserId: string) {
     const t = await this.findOne(id);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+    if (t.status !== 'DRAFT') throw new BadRequestException('Tournament must be in DRAFT status to open registration');
     t.status = 'OPEN';
     return this.tournamentsRepo.save(t);
   }

@@ -222,6 +222,23 @@ describe('TournamentsService', () => {
 
       await expect(service.remove('tournament-1', 'other')).rejects.toThrow(ForbiddenException);
     });
+
+    it('throws BadRequestException when the tournament is IN_PROGRESS', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' }));
+
+      await expect(service.remove('tournament-1', 'organiser-1')).rejects.toThrow(BadRequestException);
+      expect(mockTournamentsRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('allows removing a COMPLETED tournament', async () => {
+      const t = makeTournament({ status: 'COMPLETED' });
+      mockTournamentsRepo.findOne.mockResolvedValue(t);
+      mockTournamentsRepo.remove.mockResolvedValue(undefined);
+
+      await service.remove('tournament-1', 'organiser-1');
+
+      expect(mockTournamentsRepo.remove).toHaveBeenCalledWith(t);
+    });
   });
 
   describe('open', () => {
@@ -240,6 +257,16 @@ describe('TournamentsService', () => {
 
       await expect(service.open('tournament-1', 'other')).rejects.toThrow(ForbiddenException);
     });
+
+    it.each(['OPEN', 'IN_PROGRESS', 'COMPLETED'])(
+      'throws BadRequestException when tournament is already %s',
+      async (status) => {
+        mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: status as any }));
+
+        await expect(service.open('tournament-1', 'organiser-1')).rejects.toThrow(BadRequestException);
+        expect(mockTournamentsRepo.save).not.toHaveBeenCalled();
+      },
+    );
   });
 
   // ── PARTICIPANTS ───────────────────────────────────────────────────────────
