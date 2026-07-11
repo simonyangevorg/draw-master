@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch,
-  Param, Body, Query, HttpCode,
+  Param, ParseUUIDPipe, Body, Query, HttpCode,
 } from '@nestjs/common';
 import { MatchesService } from './matches.service';
 import { CreateMatchDto } from './dto/create-match.dto';
@@ -27,12 +27,12 @@ export class MatchesController {
   }
 
   @Get('matches/:id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.matchesService.findOne(id);
   }
 
   @Patch('matches/:id/score')
-  updateScore(@Param('id') id: string, @Body() dto: UpdateScoreDto) {
+  updateScore(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateScoreDto) {
     return this.matchesService.updateScore(id, dto);
   }
 }

@@ -1,5 +1,5 @@
 import {
-  Controller, Post, Patch, Get, Body, Param, UseGuards, Req, Res, HttpCode,
+  Controller, Post, Patch, Get, Body, Param, ParseUUIDPipe, UseGuards, Req, Res, HttpCode,
   ForbiddenException,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
@@ -46,7 +46,7 @@ export class AuthController {
 
   @Patch('users/:id/role')
   @UseGuards(JwtGuard)
-  updateRole(@Req() req: Request, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
+  updateRole(@Req() req: Request, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateRoleDto) {
     if (req['user'].role !== 'ORGANISER') {
       throw new ForbiddenException('Only an ORGANISER can change user roles');
     }

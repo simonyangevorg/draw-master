@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Delete,
-  Param, Body, HttpCode,
+  Param, ParseUUIDPipe, Body, HttpCode,
 } from '@nestjs/common';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
@@ -27,18 +27,18 @@ export class PlayersController {
   }
 
   @Get('players/:id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.playersService.findOne(id);
   }
 
   @Patch('players/:id')
-  update(@Param('id') id: string, @Body() dto: UpdatePlayerDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePlayerDto) {
     return this.playersService.update(id, dto);
   }
 
   @Delete('players/:id')
   @HttpCode(204)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.playersService.remove(id);
   }
 }
