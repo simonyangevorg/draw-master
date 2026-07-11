@@ -37,8 +37,7 @@ Only `api-gateway` is exposed to the host (port `80`). All other services and in
 | api-gateway (Nginx) | 80 (host: 80) | — | JWT gate, routes all `/api/*` |
 | auth-service | 8000 | auth | Register/login, `/auth/validate` for Nginx |
 | player-service | 8000 | players | Player CRUD, Redis cache, publishes RabbitMQ events |
-| tournament-service | 8000 | tournaments | Full tournament lifecycle (see below) |
-| match-service | 8000 | matches | Match management |
+| tournament-service | 8000 | tournaments | Full tournament lifecycle (see below), owns match entities directly |
 | stats-service | 8000 | stats | Consumes `match.completed` from RabbitMQ |
 | notification-service | 8000 | notifications | Consumes RabbitMQ events |
 | frontend | 3000 | — | React + Vite |
@@ -58,7 +57,6 @@ All requests go through `localhost:80`. Nginx strips `/api/<service>/` prefix be
 /api/auth/*           → auth-service /auth/*          (no JWT gate)
 /api/tournaments/*    → tournament-service /tournaments/*
 /api/players/*        → player-service /players/*
-/api/matches/*        → match-service /matches/*
 /api/stats/*          → stats-service /stats/*         (no JWT gate)
 /api/notifications/*  → notification-service /notifications/*
 /                     → frontend
