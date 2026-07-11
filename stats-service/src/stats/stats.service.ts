@@ -6,6 +6,21 @@ import { SeedingRequestDto } from './dto/seeding-request.dto';
 import { PlayerStatsEntity } from './entities/player-stats.entity';
 import { H2HEntity } from './entities/h2h.entity';
 
+const SURFACE_BUCKETS: Record<string, 'clay' | 'grass' | 'hard'> = {
+  clay: 'clay',
+  artificial_clay: 'clay',
+  grass: 'grass',
+  artificial_grass: 'grass',
+  hard_outdoor: 'hard',
+  hard_indoor: 'hard',
+  carpet: 'hard',
+  acrylic: 'hard',
+};
+
+function normalizeSurface(surface?: string): 'clay' | 'grass' | 'hard' | undefined {
+  return surface ? SURFACE_BUCKETS[surface.toLowerCase()] : undefined;
+}
+
 function defaultStats(playerId: string): Partial<PlayerStatsEntity> {
   return {
     playerId,
@@ -60,8 +75,9 @@ export class StatsService {
       p2Stats.setsLost += set.p1;
     }
 
-    if (dto.surface && dto.surface in winnerStats.surfaceWins) {
-      winnerStats.surfaceWins[dto.surface]++;
+    const surface = normalizeSurface(dto.surface);
+    if (surface) {
+      winnerStats.surfaceWins[surface]++;
     }
 
     await this.statsRepo.save([p1Stats, p2Stats]);
