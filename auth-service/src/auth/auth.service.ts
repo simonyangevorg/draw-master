@@ -14,6 +14,7 @@ import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtPayload } from './interfaces/user.interface';
+import { AuditLogger } from './audit-logger.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     @InjectRepository(UserEntity)
     private readonly usersRepo: Repository<UserEntity>,
     private readonly jwtService: JwtService,
+    private readonly auditLogger: AuditLogger,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -40,22 +42,30 @@ export class AuthService {
     return this.buildResponse(user);
   }
 
-  async updateRole(userId: string, dto: UpdateRoleDto) {
+  async updateRole(userId: string, dto: UpdateRoleDto, actorId: string) {
     const user = await this.usersRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
+    const previousRole = user.role;
     user.role = dto.role;
     await this.usersRepo.save(user);
+    this.auditLogger.record({ actorId, action: 'ROLE_CHANGED', targetId: userId, from: previousRole, to: dto.role });
 
     return this.sanitize(user);
   }
 
   async login(dto: LoginDto) {
     const user = await this.usersRepo.findOne({ where: { email: dto.email } });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (!user) {
+      this.auditLogger.record({ actorId: null, action: 'LOGIN_FAILED', targetId: dto.email, reason: 'unknown_user' });
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!valid) {
+      this.auditLogger.record({ actorId: user.id, action: 'LOGIN_FAILED', targetId: dto.email, reason: 'wrong_password' });
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     return this.buildResponse(user);
   }

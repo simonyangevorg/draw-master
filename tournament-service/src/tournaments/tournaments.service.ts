@@ -13,6 +13,7 @@ import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
+import { AuditLogger } from '../audit/audit-logger.service';
 
 const GROUP_LETTERS = 'ABCDEFGH';
 
@@ -31,6 +32,7 @@ export class TournamentsService {
     private readonly statsClient: ClientProxy,
     @Inject('NOTIFICATIONS_CLIENT')
     private readonly notificationsClient: ClientProxy,
+    private readonly auditLogger: AuditLogger,
   ) {}
 
   // ── CRUD ──────────────────────────────────
@@ -79,6 +81,7 @@ export class TournamentsService {
     const t = await this.findOne(id);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
     await this.tournamentsRepo.remove(t);
+    this.auditLogger.record({ actorId: organiserId, action: 'TOURNAMENT_DELETED', targetId: id });
   }
 
   async open(id: string, organiserId: string) {
@@ -124,7 +127,9 @@ export class TournamentsService {
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
     p.status = 'APPROVED';
-    return this.participantsRepo.save(p);
+    const saved = await this.participantsRepo.save(p);
+    this.auditLogger.record({ actorId: organiserId, action: 'PARTICIPANT_APPROVED', targetId: participantId, tournamentId });
+    return saved;
   }
 
   async rejectParticipant(tournamentId: string, participantId: string, organiserId: string) {
@@ -133,7 +138,9 @@ export class TournamentsService {
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
     p.status = 'REJECTED';
-    return this.participantsRepo.save(p);
+    const saved = await this.participantsRepo.save(p);
+    this.auditLogger.record({ actorId: organiserId, action: 'PARTICIPANT_REJECTED', targetId: participantId, tournamentId });
+    return saved;
   }
 
   async withdrawParticipant(tournamentId: string, participantId: string, requesterId: string, isOrganiser: boolean) {
@@ -143,7 +150,9 @@ export class TournamentsService {
     // Organiser can withdraw anyone; a player can only withdraw themselves
     if (!isOrganiser && p.playerId !== requesterId) throw new ForbiddenException('Not allowed');
     p.status = 'WITHDRAWN';
-    return this.participantsRepo.save(p);
+    const saved = await this.participantsRepo.save(p);
+    this.auditLogger.record({ actorId: requesterId, action: 'PARTICIPANT_WITHDRAWN', targetId: participantId, tournamentId });
+    return saved;
   }
 
   async assignSeed(tournamentId: string, participantId: string, seed: number, organiserId: string) {
@@ -176,6 +185,7 @@ export class TournamentsService {
 
     await this.tournamentsRepo.update(tournamentId, { status: 'IN_PROGRESS' });
     t.status = 'IN_PROGRESS';
+    this.auditLogger.record({ actorId: organiserId, action: 'DRAW_GENERATED', targetId: tournamentId, drawFormat: t.drawFormat });
     return { tournament: t, matches };
   }
 
@@ -387,6 +397,12 @@ export class TournamentsService {
       }
     }
     const saved = await this.matchesRepo.save(match);
+
+    if (dto.winnerId) {
+      this.auditLogger.record({
+        actorId: organiserId, action: 'MATCH_RESULT_RECORDED', targetId: matchId, tournamentId, winnerId: dto.winnerId,
+      });
+    }
 
     // Publish match.completed event when a winner is recorded
     if (dto.winnerId && saved.participant1Id && saved.participant2Id) {

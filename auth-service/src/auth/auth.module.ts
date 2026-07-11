@@ -6,6 +6,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtGuard } from './jwt.guard';
 import { UserEntity } from './entities/user.entity';
+import { AuditLogger } from './audit-logger.service';
 
 @Module({
   imports: [
@@ -18,6 +19,6 @@ import { UserEntity } from './entities/user.entity';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 5 }]),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtGuard],
+  providers: [AuthService, JwtGuard, AuditLogger],
 })
 export class AuthModule {}

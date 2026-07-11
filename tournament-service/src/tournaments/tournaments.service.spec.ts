@@ -6,6 +6,7 @@ import { TournamentEntity } from './entities/tournament.entity';
 import { ParticipantEntity } from './entities/participant.entity';
 import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
+import { AuditLogger } from '../audit/audit-logger.service';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,7 @@ describe('TournamentsService', () => {
   };
   const mockStatsClient = { emit: jest.fn() };
   const mockNotificationsClient = { emit: jest.fn() };
+  const mockAuditLogger = { record: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -99,6 +101,7 @@ describe('TournamentsService', () => {
         { provide: getRepositoryToken(TournamentGroupEntity), useValue: mockGroupsRepo },
         { provide: 'STATS_CLIENT', useValue: mockStatsClient },
         { provide: 'NOTIFICATIONS_CLIENT', useValue: mockNotificationsClient },
+        { provide: AuditLogger, useValue: mockAuditLogger },
       ],
     }).compile();
 

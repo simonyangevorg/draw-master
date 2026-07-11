@@ -5,6 +5,7 @@ import { ConflictException, UnauthorizedException, NotFoundException } from '@ne
 import * as bcrypt from 'bcryptjs';
 import { AuthService } from './auth.service';
 import { UserEntity } from './entities/user.entity';
+import { AuditLogger } from './audit-logger.service';
 
 function makeUser(overrides: Partial<UserEntity> = {}): UserEntity {
   return {
@@ -31,6 +32,7 @@ describe('AuthService', () => {
     sign: jest.fn(),
     verify: jest.fn(),
   };
+  const mockAuditLogger = { record: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -40,6 +42,7 @@ describe('AuthService', () => {
         AuthService,
         { provide: getRepositoryToken(UserEntity), useValue: mockUsersRepo },
         { provide: JwtService, useValue: mockJwtService },
+        { provide: AuditLogger, useValue: mockAuditLogger },
       ],
     }).compile();
 
@@ -86,6 +89,9 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'nobody@example.com', password: 'whatever' }),
       ).rejects.toThrow(UnauthorizedException);
+      expect(mockAuditLogger.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'LOGIN_FAILED', reason: 'unknown_user' }),
+      );
     });
 
     it('throws UnauthorizedException for a wrong password', async () => {
@@ -95,6 +101,9 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'existing@example.com', password: 'wrong-password' }),
       ).rejects.toThrow(UnauthorizedException);
+      expect(mockAuditLogger.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'LOGIN_FAILED', reason: 'wrong_password' }),
+      );
     });
 
     it('returns a token and sanitized user on correct credentials', async () => {

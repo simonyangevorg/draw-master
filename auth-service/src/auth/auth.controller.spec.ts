@@ -93,12 +93,12 @@ describe('AuthController', () => {
     });
 
     it('delegates to authService when the caller is an ORGANISER', () => {
-      const req = { user: { role: 'ORGANISER' } } as any;
+      const req = { user: { role: 'ORGANISER', sub: 'organiser-1' } } as any;
       mockAuthService.updateRole.mockResolvedValue({ id: 'target-id', role: 'ORGANISER' });
 
       controller.updateRole(req, 'target-id', { role: 'ORGANISER' });
 
-      expect(mockAuthService.updateRole).toHaveBeenCalledWith('target-id', { role: 'ORGANISER' });
+      expect(mockAuthService.updateRole).toHaveBeenCalledWith('target-id', { role: 'ORGANISER' }, 'organiser-1');
     });
   });
 });

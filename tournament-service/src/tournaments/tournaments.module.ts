@@ -8,6 +8,7 @@ import { ParticipantEntity } from './entities/participant.entity';
 import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
 import { JwtGuard } from '../auth/jwt.guard';
+import { AuditLogger } from '../audit/audit-logger.service';
 
 @Module({
   imports: [
@@ -39,6 +40,6 @@ import { JwtGuard } from '../auth/jwt.guard';
     ]),
   ],
   controllers: [TournamentsController],
-  providers: [TournamentsService, JwtGuard],
+  providers: [TournamentsService, JwtGuard, AuditLogger],
 })
 export class TournamentsModule {}

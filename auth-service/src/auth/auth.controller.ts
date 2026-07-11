@@ -50,7 +50,7 @@ export class AuthController {
     if (req['user'].role !== 'ORGANISER') {
       throw new ForbiddenException('Only an ORGANISER can change user roles');
     }
-    return this.authService.updateRole(id, dto);
+    return this.authService.updateRole(id, dto, req['user'].sub);
   }
 
   /**
