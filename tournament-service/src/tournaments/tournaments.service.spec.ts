@@ -581,6 +581,12 @@ describe('TournamentsService', () => {
       const unique = new Set(pairKeys);
       expect(unique.size).toBe(matches.length);
     });
+
+    it('all matches are round 1 — Round Robin has no round grouping', async () => {
+      const { matches } = await run(5);
+
+      expect(matches.every((m) => m.round === 1)).toBe(true);
+    });
   });
 
   // ── GROUP STAGE ────────────────────────────────────────────────────────────

@@ -257,10 +257,9 @@ export class TournamentsService {
 
   private async generateRoundRobin(t: TournamentEntity, participants: ParticipantEntity[]) {
     const all: Partial<TournamentMatchEntity>[] = [];
-    let round = 1;
     for (let i = 0; i < participants.length; i++)
       for (let j = i + 1; j < participants.length; j++)
-        all.push({ id: uuidv4(), tournamentId: t.id, stage: 'KNOCKOUT', round: round++, position: all.length, participant1Id: participants[i].id, participant2Id: participants[j].id, status: 'SCHEDULED' });
+        all.push({ id: uuidv4(), tournamentId: t.id, stage: 'KNOCKOUT', round: 1, position: all.length, participant1Id: participants[i].id, participant2Id: participants[j].id, status: 'SCHEDULED' });
     return this.matchesRepo.save(all as TournamentMatchEntity[]);
   }
 
