@@ -558,7 +558,7 @@ describe('TournamentsService', () => {
     });
 
     it('creates exactly one BYE match when player count is not a power of 2', async () => {
-      const { matches } = await run([1, 2, 3].map((s) => makeParticipant({ seed: s })));
+      const { matches } = await run([1, 2, 3, 4, 5, 6, 7].map((s) => makeParticipant({ seed: s })));
 
       const byeMatches = matches.filter((m) => m.status === 'BYE');
       expect(byeMatches.length).toBe(1);
@@ -567,7 +567,7 @@ describe('TournamentsService', () => {
     });
 
     it('auto-advances BYE winner into the next round match', async () => {
-      const { matches } = await run([1, 2, 3].map((s) => makeParticipant({ seed: s })));
+      const { matches } = await run([1, 2, 3, 4, 5, 6, 7].map((s) => makeParticipant({ seed: s })));
 
       const bye = matches.find((m) => m.status === 'BYE');
       const next = matches.find((m) => m.id === bye.nextMatchId);
