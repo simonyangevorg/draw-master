@@ -2,7 +2,7 @@ import {
   Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { v4 as uuidv4 } from 'uuid';
 import { TournamentEntity } from './entities/tournament.entity';
@@ -33,6 +33,7 @@ export class TournamentsService {
     @Inject('NOTIFICATIONS_CLIENT')
     private readonly notificationsClient: ClientProxy,
     private readonly auditLogger: AuditLogger,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ── CRUD ──────────────────────────────────
@@ -383,20 +384,38 @@ export class TournamentsService {
     if (dto.sets) match.sets = dto.sets;
     if (dto.status) match.status = dto.status as any;
     if (dto.scheduledAt) match.scheduledAt = new Date(dto.scheduledAt);
+
+    let next: TournamentMatchEntity | null = null;
     if (dto.winnerId) {
       match.winnerId = dto.winnerId;
       match.status = 'COMPLETED';
       match.completedAt = new Date();
       if (match.nextMatchId) {
-        const next = await this.matchesRepo.findOne({ where: { id: match.nextMatchId } });
+        next = await this.matchesRepo.findOne({ where: { id: match.nextMatchId } });
         if (next) {
           if (!next.participant1Id) next.participant1Id = dto.winnerId;
           else next.participant2Id = dto.winnerId;
-          await this.matchesRepo.save(next);
         }
       }
     }
-    const saved = await this.matchesRepo.save(match);
+
+    // Match completion and next-round advancement must land together —
+    // otherwise a mid-write failure leaves the match COMPLETED with its
+    // winner never advanced, which is unrecoverable without manual repair.
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    let saved: TournamentMatchEntity;
+    try {
+      saved = await queryRunner.manager.save(match);
+      if (next) await queryRunner.manager.save(next);
+      await queryRunner.commitTransaction();
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
 
     if (dto.winnerId) {
       this.auditLogger.record({

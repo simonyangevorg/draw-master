@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { TournamentEntity } from './entities/tournament.entity';
@@ -87,10 +88,20 @@ describe('TournamentsService', () => {
   const mockStatsClient = { emit: jest.fn() };
   const mockNotificationsClient = { emit: jest.fn() };
   const mockAuditLogger = { record: jest.fn() };
+  const mockQueryRunner = {
+    connect: jest.fn(),
+    startTransaction: jest.fn(),
+    commitTransaction: jest.fn(),
+    rollbackTransaction: jest.fn(),
+    release: jest.fn(),
+    manager: { save: null as any },
+  };
+  const mockDataSource = { createQueryRunner: jest.fn(() => mockQueryRunner) };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     _id = 0;
+    mockQueryRunner.manager.save = mockMatchesRepo.save;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -99,6 +110,7 @@ describe('TournamentsService', () => {
         { provide: getRepositoryToken(ParticipantEntity), useValue: mockParticipantsRepo },
         { provide: getRepositoryToken(TournamentMatchEntity), useValue: mockMatchesRepo },
         { provide: getRepositoryToken(TournamentGroupEntity), useValue: mockGroupsRepo },
+        { provide: DataSource, useValue: mockDataSource },
         { provide: 'STATS_CLIENT', useValue: mockStatsClient },
         { provide: 'NOTIFICATIONS_CLIENT', useValue: mockNotificationsClient },
         { provide: AuditLogger, useValue: mockAuditLogger },
@@ -844,6 +856,33 @@ describe('TournamentsService', () => {
 
       const nextSave = mockMatchesRepo.save.mock.calls.find((c) => c[0].id === 'match-next')?.[0];
       expect(nextSave.participant2Id).toBe('part1');
+    });
+
+    it('runs both saves inside a single transaction', async () => {
+      setupMatch();
+
+      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
+
+      expect(mockDataSource.createQueryRunner).toHaveBeenCalled();
+      expect(mockQueryRunner.startTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.rollbackTransaction).not.toHaveBeenCalled();
+      expect(mockQueryRunner.release).toHaveBeenCalled();
+    });
+
+    it('rolls back and does not advance the winner if the second save fails', async () => {
+      setupMatch();
+      mockQueryRunner.manager.save = jest.fn()
+        .mockResolvedValueOnce({ id: 'match-1' }) // match save succeeds
+        .mockRejectedValueOnce(new Error('db exploded')); // next-match save fails
+
+      await expect(
+        service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1'),
+      ).rejects.toThrow('db exploded');
+
+      expect(mockQueryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(mockQueryRunner.commitTransaction).not.toHaveBeenCalled();
+      expect(mockQueryRunner.release).toHaveBeenCalled();
     });
 
     it('emits match.completed to both stats and notifications clients', async () => {
