@@ -1,6 +1,6 @@
 import {
   Entity, PrimaryGeneratedColumn, Column, CreateDateColumn,
-  ManyToOne, JoinColumn,
+  ManyToOne, JoinColumn, Index,
 } from 'typeorm';
 import { TournamentEntity } from './tournament.entity';
 
@@ -19,6 +19,7 @@ export class ParticipantEntity {
   tournament: TournamentEntity;
 
   // Primary player (always required)
+  @Index()
   @Column()
   playerId: string;
 
