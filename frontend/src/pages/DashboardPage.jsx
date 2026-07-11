@@ -2,14 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { apiGet, apiPost, apiPatch } from "../api";
-
-const STATUS_BADGE = {
-  DRAFT:       { label: "Draft",       color: "#6b7280" },
-  OPEN:        { label: "Open",        color: "#2d7a4f" },
-  IN_PROGRESS: { label: "In Progress", color: "#d97706" },
-  COMPLETED:   { label: "Completed",   color: "#1d4ed8" },
-  CANCELLED:   { label: "Cancelled",   color: "#dc2626" },
-};
+import { STATUS_BADGE, SURFACE_LABEL } from "../constants";
 
 const TYPE_LABEL = {
   SINGLES_MEN:    "Singles Men",
@@ -17,17 +10,6 @@ const TYPE_LABEL = {
   DOUBLES_MEN:    "Doubles Men",
   DOUBLES_WOMEN:  "Doubles Women",
   MIXED_DOUBLES:  "Mixed Doubles",
-};
-
-const SURFACE_LABEL = {
-  CLAY:             "Clay",
-  HARD_OUTDOOR:     "Hard (Outdoor)",
-  HARD_INDOOR:      "Hard (Indoor)",
-  GRASS:            "Grass",
-  CARPET:           "Carpet",
-  ACRYLIC:          "Acrylic",
-  ARTIFICIAL_CLAY:  "Artificial Clay",
-  ARTIFICIAL_GRASS: "Artificial Grass",
 };
 
 export default function DashboardPage() {
