@@ -25,5 +25,9 @@ Thumbs.db
 # Coverage
 coverage/
 
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+
 # Claude Code local memory (personal, not project)
 .claude/

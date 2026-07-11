@@ -64,3 +64,43 @@ jobs:
         run: npm run test:integration
         env:
           TEST_DATABASE_URL: postgresql://tennis:tennis_secret@localhost:5432/test
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create .env for docker compose
+        run: |
+          cat <<EOF > .env
+          POSTGRES_USER=tennis
+          POSTGRES_PASSWORD=tennis_secret
+          JWT_SECRET=e2e_ci_secret
+          RABBITMQ_DEFAULT_USER=tennis
+          RABBITMQ_DEFAULT_PASS=tennis_secret
+          EOF
+      - name: Start the full stack
+        run: docker compose up -d --build
+      - name: Wait for the gateway to be ready
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://localhost/api/auth/health && exit 0
+            sleep 5
+          done
+          echo "Gateway never became ready" && exit 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install frontend dependencies and Playwright browsers
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run E2E tests
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
