@@ -721,9 +721,32 @@ describe('TournamentsService', () => {
         'organiser-1',
       );
 
-      const savedM1 = mockMatchesRepo.save.mock.calls.find((c) => c[0].id === 'm1')?.[0];
+      expect(mockMatchesRepo.save).toHaveBeenCalledTimes(1);
+      const savedBatch = mockMatchesRepo.save.mock.calls[0][0];
+      const savedM1 = savedBatch.find((m) => m.id === 'm1');
       expect(savedM1.participant1Id).toBe('pB');
       expect(savedM1.participant2Id).toBe('pA');
+    });
+
+    it('saves all affected matches in a single batched call', async () => {
+      const matches = [
+        { id: 'm1', participant1Id: 'pA', participant2Id: 'pB', tournamentId: 'tournament-1' },
+        { id: 'm2', participant1Id: 'pC', participant2Id: 'pA', tournamentId: 'tournament-1' },
+        { id: 'm3', participant1Id: 'pX', participant2Id: 'pY', tournamentId: 'tournament-1' },
+      ] as TournamentMatchEntity[];
+
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockMatchesRepo.find.mockResolvedValue(matches);
+      mockMatchesRepo.save.mockImplementation(async (m) => m);
+
+      await service.swapParticipants(
+        'tournament-1',
+        { participantId1: 'pA', participantId2: 'pB' },
+        'organiser-1',
+      );
+
+      expect(mockMatchesRepo.save).toHaveBeenCalledTimes(1);
+      expect(mockMatchesRepo.save.mock.calls[0][0]).toHaveLength(2); // m3 is unaffected
     });
 
     it('throws ForbiddenException for non-organiser', async () => {

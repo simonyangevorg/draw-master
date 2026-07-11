@@ -283,19 +283,19 @@ export class TournamentsService {
     const all: Partial<TournamentMatchEntity>[] = [];
 
     // ── Create groups and assign participants (snake-draft) ──
-    const groups: TournamentGroupEntity[] = [];
-    for (let g = 0; g < numGroups; g++)
-      groups.push(await this.groupsRepo.save(this.groupsRepo.create({
+    const groups: TournamentGroupEntity[] = await this.groupsRepo.save(
+      Array.from({ length: numGroups }, (_, g) => this.groupsRepo.create({
         tournamentId: t.id, name: `Group ${GROUP_LETTERS[g]}`, position: g, participantIds: [],
-      })));
+      })),
+    );
 
     for (let i = 0; i < shuffled.length; i++) {
       const group = groups[i % numGroups];
       group.participantIds.push(shuffled[i].id);
       shuffled[i].groupId = group.id;
-      await this.participantsRepo.save(shuffled[i]);
     }
-    for (const g of groups) await this.groupsRepo.save(g);
+    await this.participantsRepo.save(shuffled);
+    await this.groupsRepo.save(groups);
 
     // ── Generate round-robin matches per group ──
     for (const group of groups) {
@@ -353,14 +353,16 @@ export class TournamentsService {
     const t = await this.findOne(tournamentId);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
     const matches = await this.matchesRepo.find({ where: { tournamentId } });
+    const changed: TournamentMatchEntity[] = [];
     for (const m of matches) {
-      let changed = false;
-      if (m.participant1Id === dto.participantId1) { m.participant1Id = dto.participantId2; changed = true; }
-      else if (m.participant1Id === dto.participantId2) { m.participant1Id = dto.participantId1; changed = true; }
-      if (m.participant2Id === dto.participantId1) { m.participant2Id = dto.participantId2; changed = true; }
-      else if (m.participant2Id === dto.participantId2) { m.participant2Id = dto.participantId1; changed = true; }
-      if (changed) await this.matchesRepo.save(m);
+      let isChanged = false;
+      if (m.participant1Id === dto.participantId1) { m.participant1Id = dto.participantId2; isChanged = true; }
+      else if (m.participant1Id === dto.participantId2) { m.participant1Id = dto.participantId1; isChanged = true; }
+      if (m.participant2Id === dto.participantId1) { m.participant2Id = dto.participantId2; isChanged = true; }
+      else if (m.participant2Id === dto.participantId2) { m.participant2Id = dto.participantId1; isChanged = true; }
+      if (isChanged) changed.push(m);
     }
+    if (changed.length > 0) await this.matchesRepo.save(changed);
     return this.getDraw(tournamentId);
   }
 
