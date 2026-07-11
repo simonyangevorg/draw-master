@@ -17,6 +17,7 @@ export default function TournamentDetailPage() {
   const [loading, setLoading]         = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [msg, setMsg]                 = useState({ text: "", error: false });
+  const [confirmWithdrawId, setConfirmWithdrawId] = useState(null);
 
   const isOrganiser = tournament?.organiserId === user?.id;
 
@@ -64,8 +65,13 @@ export default function TournamentDetailPage() {
     setActionLoading(false);
   }
 
-  async function withdrawParticipant(pid) {
-    if (!confirm("Withdraw this participant?")) return;
+  function withdrawParticipant(pid) {
+    setConfirmWithdrawId(pid);
+  }
+
+  async function confirmWithdraw() {
+    const pid = confirmWithdrawId;
+    setConfirmWithdrawId(null);
     const res = await apiPatch(`/api/tournaments/${id}/participants/${pid}/withdraw`);
     if (res.ok) { await loadTournament(); flash("Participant withdrawn."); }
     else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed to withdraw", true); }
@@ -156,6 +162,16 @@ export default function TournamentDetailPage() {
 
         {msg.text && (
           <div className={`alert ${msg.error ? "alert-error" : "alert-success"}`}>{msg.text}</div>
+        )}
+
+        {confirmWithdrawId && (
+          <div className="alert alert-error" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+            <span>Withdraw this participant? This cannot be undone.</span>
+            <div style={{ display: "flex", gap: ".5rem", flexShrink: 0 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmWithdrawId(null)}>Cancel</button>
+              <button className="btn btn-primary btn-sm" onClick={confirmWithdraw}>Confirm Withdraw</button>
+            </div>
+          </div>
         )}
 
         {/* ── Player enrolment action bar ── */}
