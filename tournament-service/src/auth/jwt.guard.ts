@@ -14,7 +14,7 @@ export class JwtGuard implements CanActivate {
     if (!header?.startsWith('Bearer ')) throw new UnauthorizedException('Missing token');
     const token = header.slice(7);
     try {
-      req['user'] = this.jwtService.verify(token);
+      req['user'] = this.jwtService.verify(token, { algorithms: ['HS256'] });
       return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired token');

@@ -66,7 +66,7 @@ export class AuthController {
       return {};
     }
     try {
-      const payload = this.jwtService.verify<{ sub: string; email: string; name: string; role: string }>(header.slice(7));
+      const payload = this.jwtService.verify<{ sub: string; email: string; name: string; role: string }>(header.slice(7), { algorithms: ['HS256'] });
       res.setHeader('X-User-Sub',   payload.sub);
       res.setHeader('X-User-Email', payload.email);
       res.setHeader('X-User-Name',  payload.name);

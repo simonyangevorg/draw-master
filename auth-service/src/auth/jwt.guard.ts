@@ -19,7 +19,7 @@ export class JwtGuard implements CanActivate {
     }
     const token = authHeader.slice(7);
     try {
-      const payload = this.jwtService.verify(token);
+      const payload = this.jwtService.verify(token, { algorithms: ['HS256'] });
       req['user'] = payload;
       return true;
     } catch {

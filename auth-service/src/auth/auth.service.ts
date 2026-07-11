@@ -69,7 +69,7 @@ export class AuthService {
   async refresh(dto: RefreshTokenDto) {
     let payload: { sub: string; type?: string };
     try {
-      payload = this.jwtService.verify(dto.refreshToken);
+      payload = this.jwtService.verify(dto.refreshToken, { algorithms: ['HS256'] });
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
