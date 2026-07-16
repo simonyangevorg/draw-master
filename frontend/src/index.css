@@ -472,7 +472,27 @@ a.btn-primary, .navbar-links a.btn-primary { color: #fff; }
    DASHBOARD LAYOUT
 ══════════════════════════════════════════ */
 .dash-layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; background: var(--bg); }
-@media (max-width: 768px) { .dash-layout { grid-template-columns: 1fr; } .sidebar { display: none; } }
+@media (max-width: 768px) {
+  .dash-layout { grid-template-columns: 1fr; }
+  /* Collapse the vertical sidebar into a horizontal, scrollable top bar
+     rather than hiding it — it's the app's only navigation. */
+  .sidebar {
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    height: auto;
+    padding: .5rem .75rem;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    z-index: 50;
+  }
+  .sidebar-logo { display: none; }
+  .sidebar-nav { flex: 0 0 auto; flex-direction: row; padding: 0; gap: .25rem; }
+  .sidebar-link { padding: .5rem .6rem; white-space: nowrap; }
+  .sidebar-footer { flex-direction: row; align-items: center; margin-top: 0; margin-left: auto; padding: 0; border-top: none; flex-shrink: 0; }
+  .sidebar-user-name, .sidebar-user-role { display: none; }
+}
 
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 1.25rem 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 .sidebar-logo { padding: 0 1.25rem 1.5rem; display: block; }
@@ -548,6 +568,16 @@ a.btn-primary, .navbar-links a.btn-primary { color: #fff; }
 .summary-grid { display: grid; grid-template-columns: 140px 1fr; gap: .4rem .75rem; font-size: .875rem; }
 .summary-grid span:nth-child(odd) { color: var(--text-muted); }
 
+/* ── Small-screen (phone) tightening ── */
+@media (max-width: 480px) {
+  .dash-main { padding: 1.25rem; }
+  .form-card { padding: 1.25rem; }
+  .step-label { font-size: .68rem; }
+  .summary-grid { grid-template-columns: 1fr; }
+  .summary-grid span:nth-child(odd) { margin-top: .5rem; font-weight: 600; }
+  .summary-grid span:nth-child(odd):first-child { margin-top: 0; }
+}
+
 /* ══════════════════════════════════════════
    TOURNAMENT DETAIL
 ══════════════════════════════════════════ */
@@ -555,7 +585,7 @@ a.btn-primary, .navbar-links a.btn-primary { color: #fff; }
 .t-detail-meta { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: .875rem; color: var(--text-muted); margin-top: .5rem; }
 .t-actions { display: flex; gap: .75rem; flex-wrap: wrap; }
 
-.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 1.5rem; }
+.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 1.5rem; overflow-x: auto; }
 .tab { padding: .6rem 1.25rem; font-size: .875rem; font-weight: 600; color: var(--text-muted); background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color .15s, border-color .15s; }
 .tab:hover { color: var(--green); }
 .tab-active { color: var(--green-dark); border-bottom-color: var(--green); }
@@ -567,6 +597,7 @@ a.btn-primary, .navbar-links a.btn-primary { color: #fff; }
 .detail-list dt { color: var(--text-muted); }
 .detail-list dd { font-weight: 500; }
 
+.table-scroll { overflow-x: auto; }
 .data-table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); font-size: .875rem; }
 .data-table th { background: var(--bg); padding: .75rem 1rem; text-align: left; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
 .data-table td { padding: .75rem 1rem; border-top: 1px solid var(--border); }
@@ -911,6 +942,10 @@ a.btn-primary, .navbar-links a.btn-primary { color: #fff; }
 }
 .draw-pool-player:hover { border-color: var(--green); background: var(--green-light); }
 .draw-pool-player:active { cursor: grabbing; }
+.draw-pool-player-selected { border-color: var(--green); background: var(--green-light); box-shadow: 0 0 0 2px rgba(45,122,79,.25); }
+
+/* tap-to-move selection highlight (touch fallback for drag-and-drop) */
+.bk-selected { box-shadow: inset 0 0 0 2px var(--green); background: var(--green-light); }
 
 .draw-bracket-wrap { flex: 1; min-width: 0; overflow-x: auto; }
 

@@ -330,6 +330,7 @@ function ParticipantsPanel({ participants, isOrganiser, currentUserId, tournamen
           {pending.length} pending application{pending.length > 1 ? "s" : ""} awaiting approval
         </div>
       )}
+      <div className="table-scroll">
       <table className="data-table">
         <thead>
           <tr>
@@ -383,6 +384,7 @@ function ParticipantsPanel({ participants, isOrganiser, currentUserId, tournamen
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -393,6 +395,11 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
   const dragSource = useRef(null);
   const [poolOver, setPoolOver]     = useState(false);
   const [scoreMatch, setScoreMatch] = useState(null); // match object being scored
+  // Tap-to-move fallback for touch devices, where native HTML5 drag-and-drop
+  // (used below for mouse users) doesn't fire. Tapping a player "picks" them
+  // up (mirrors dragstart), tapping a slot/pool "drops" them (mirrors drop) —
+  // both routes end up going through the same dragSource-based handlers.
+  const [selected, setSelected] = useState(null); // { pid, fromMatchId, fromSlot } | null
 
   function playerLabel(pid) {
     const p = pMap[pid];
@@ -451,6 +458,29 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
     await patchSlot(src.fromMatchId, src.fromSlot, null);
   }
 
+  // Tap-to-move: picking up toggles selection; dropping routes through the
+  // same dragSource-based handlers used by native drag-and-drop above.
+  function handleTapPick(pid, fromMatchId, fromSlot) {
+    setSelected(sel =>
+      sel && sel.pid === pid && sel.fromMatchId === fromMatchId ? null : { pid, fromMatchId, fromSlot }
+    );
+  }
+
+  function handleTapDrop(targetMatchId, targetSlot, currentPid) {
+    if (!selected) return;
+    dragSource.current = selected;
+    setSelected(null);
+    handleDropOnSlot(targetMatchId, targetSlot, currentPid);
+  }
+
+  function handleTapRemoveToPool(e) {
+    if (!selected?.fromMatchId) return;
+    e.stopPropagation();
+    dragSource.current = selected;
+    setSelected(null);
+    handleDropOnPool();
+  }
+
   return (
     <div className="draw-manager">
       {/* Pool sidebar — always shown to organiser */}
@@ -460,17 +490,23 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
           onDragOver={e => { e.preventDefault(); setPoolOver(true); }}
           onDragLeave={() => setPoolOver(false)}
           onDrop={handleDropOnPool}
+          onClick={handleTapRemoveToPool}
         >
           <div className="draw-pool-title">Available Players</div>
           <div className="draw-pool-hint">
-            {pool.length === 0 ? "All players are in the draw" : "Drag onto a slot · drop here to remove"}
+            {pool.length === 0 ? "All players are in the draw" : "Drag onto a slot, or tap a player then tap a slot"}
           </div>
           {pool.map(p => (
             <div
               key={p.id}
-              className="draw-pool-player"
+              className={`draw-pool-player${selected?.pid === p.id && !selected.fromMatchId ? " draw-pool-player-selected" : ""}`}
               draggable
               onDragStart={() => { dragSource.current = { pid: p.id, fromMatchId: null, fromSlot: null }; }}
+              onClick={e => {
+                if (selected?.fromMatchId) { handleTapRemoveToPool(e); return; }
+                e.stopPropagation();
+                handleTapPick(p.id, null, null);
+              }}
             >
               {p.seed && <span className="bk-seed">{p.seed}</span>}
               {playerLabel(p.id)}
@@ -489,6 +525,9 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
           dragSource={dragSource}
           onDropOnSlot={handleDropOnSlot}
           onSetBye={setBye}
+          selected={selected}
+          onTapPick={handleTapPick}
+          onTapDrop={handleTapDrop}
           onCardClick={match => {
             // Only open score modal for playable matches (both players set, not done)
             const canScore = match.participant1Id && match.participant2Id
@@ -533,7 +572,7 @@ function matchTop(ri, mi) {
 }
 function matchCenter(ri, mi) { return matchTop(ri, mi) + CARD_H / 2; }
 
-function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, onSetBye, onCardClick, playerLabel }) {
+function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, onSetBye, selected, onTapPick, onTapDrop, onCardClick, playerLabel }) {
   const rounds = [...new Set(draw.map(m => m.round))].sort((a, b) => a - b);
   if (!rounds.length) return null;
 
@@ -618,6 +657,21 @@ function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, o
                 ? playerLabel(pid)
                 : isByeSlot ? "BYE"
                 : fallbackLabel || "TBD";
+              const isSelected = selected && selected.pid === pid && selected.fromMatchId === match.id && selected.fromSlot === slot;
+
+              // Tap-to-move fallback for touch devices (no native drag-and-drop
+              // there): with a player selected, any editable slot tap drops/swaps
+              // them here. With nothing selected, a filled-but-not-yet-scorable
+              // slot picks the player up instead — scoring (canScore) keeps
+              // priority when both are possible, since "×" remove still offers a
+              // touch path to free up an already-scorable match's slots.
+              const rowOnClick = selected
+                ? (canEdit ? e => { e.stopPropagation(); onTapDrop(match.id, slot, pid); } : undefined)
+                : canScore
+                  ? e => { if (e.target.tagName !== "BUTTON") onCardClick(match); }
+                  : (canEdit && pid)
+                    ? e => { e.stopPropagation(); onTapPick(pid, match.id, slot); }
+                    : undefined;
 
               return (
                 <div
@@ -628,6 +682,7 @@ function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, o
                     isByeSlot ? "bk-bye-row"  : "",
                     isOver    ? "bk-drop-over": "",
                     isLocked  ? "bk-locked"   : "",
+                    isSelected ? "bk-selected" : "",
                   ].filter(Boolean).join(" ")}
                   draggable={canEdit && !!pid}
                   onDragStart={canEdit && pid ? () => {
@@ -636,7 +691,7 @@ function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, o
                   onDragOver={canEdit ? e => { e.preventDefault(); setDragOver(key); } : undefined}
                   onDragLeave={canEdit ? () => setDragOver(null) : undefined}
                   onDrop={canEdit ? () => { setDragOver(null); onDropOnSlot(match.id, slot, pid); } : undefined}
-                  onClick={canScore ? e => { if (e.target.tagName !== "BUTTON") onCardClick(match); } : undefined}
+                  onClick={rowOnClick}
                   title={isLocked ? "Previous round must be a BYE or completed first" : undefined}
                 >
                   {pMap[pid]?.seed && <span className="bk-seed">{pMap[pid].seed}</span>}
