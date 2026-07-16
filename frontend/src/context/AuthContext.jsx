@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
+  const navigate = useNavigate();
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem("tennis_user");
@@ -11,6 +13,18 @@ export function AuthProvider({ children }) {
       return null;
     }
   });
+
+  // api.js dispatches this when a request 401s and the token refresh also
+  // fails — react by dropping the session and navigating, instead of api.js
+  // doing a hard window.location redirect (which only makes sense in a browser tab).
+  useEffect(() => {
+    function handleSessionExpired() {
+      setUser(null);
+      navigate("/login");
+    }
+    window.addEventListener("tennis:session-expired", handleSessionExpired);
+    return () => window.removeEventListener("tennis:session-expired", handleSessionExpired);
+  }, [navigate]);
 
   const login = useCallback(async (email, password) => {
     const res = await fetch("/api/auth/login", {
@@ -31,6 +45,7 @@ export function AuthProvider({ children }) {
       name: data.user.name,
       role: data.user.role,
       token: data.token,
+      refreshToken: data.refreshToken,
     };
     localStorage.setItem("tennis_user", JSON.stringify(userData));
     setUser(userData);
@@ -56,6 +71,7 @@ export function AuthProvider({ children }) {
       name: data.user.name,
       role: data.user.role,
       token: data.token,
+      refreshToken: data.refreshToken,
     };
     localStorage.setItem("tennis_user", JSON.stringify(userData));
     setUser(userData);
