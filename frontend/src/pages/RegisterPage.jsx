@@ -4,12 +4,6 @@ import { useAuth } from "../context/AuthContext";
 
 const ROLES = [
   {
-    value: "ORGANISER",
-    label: "Organiser",
-    icon: "🏆",
-    desc: "Run your club, create and manage tournaments",
-  },
-  {
     value: "MEMBER",
     label: "Club Member",
     icon: "🎾",
@@ -108,6 +102,9 @@ export default function RegisterPage() {
                   </button>
                 ))}
               </div>
+              <p className="login-footer-text">
+                Want to organise tournaments? Ask an existing organiser to upgrade your account after you sign up.
+              </p>
               <p className="login-footer-text">
                 Already have an account?{" "}
                 <Link to="/login" className="form-link">Sign in</Link>
