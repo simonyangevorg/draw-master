@@ -6,6 +6,8 @@
  * (listening for "tennis:session-expired") navigate to /login instead of
  * hard-redirecting — a hard redirect only makes sense inside a browser tab.
  */
+import { API_BASE_URL } from "./config";
+
 function getUser() {
   try {
     return JSON.parse(localStorage.getItem("tennis_user") || "null");
@@ -35,7 +37,7 @@ function refreshToken() {
   if (!user?.refreshToken) return Promise.resolve(null);
 
   if (!refreshPromise) {
-    refreshPromise = fetch("/api/auth/refresh", {
+    refreshPromise = fetch(`${API_BASE_URL}/api/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken: user.refreshToken }),
@@ -70,7 +72,7 @@ export async function apiFetch(path, options = {}) {
     ...(options.headers ?? {}),
   };
 
-  const res = await fetch(path, { ...options, headers });
+  const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
 
   if (res.status === 401) {
     if (!options._retried) {
