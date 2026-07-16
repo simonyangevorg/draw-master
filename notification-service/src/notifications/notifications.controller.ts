@@ -41,7 +41,7 @@ export class NotificationsController {
     return { status: 'ok', service: 'notification-service' };
   }
 
-  @Post('notify')
+  @Post('notifications/notify')
   @HttpCode(201)
   send(@Body() dto: CreateNotificationDto) {
     return this.notificationsService.send(dto);

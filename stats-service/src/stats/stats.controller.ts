@@ -30,18 +30,18 @@ export class StatsController {
     return { status: 'ok', service: 'stats-service' };
   }
 
-  @Post('results')
+  @Post('stats/results')
   @HttpCode(201)
   recordResult(@Body() dto: MatchResultDto) {
     return this.statsService.recordResult(dto);
   }
 
-  @Get('players/:playerId/stats')
+  @Get('stats/players/:playerId/stats')
   getPlayerStats(@Param('playerId') playerId: string) {
     return this.statsService.getPlayerStats(playerId);
   }
 
-  @Get('players/:playerId/h2h/:opponentId')
+  @Get('stats/players/:playerId/h2h/:opponentId')
   getH2H(
     @Param('playerId') playerId: string,
     @Param('opponentId') opponentId: string,
@@ -49,12 +49,12 @@ export class StatsController {
     return this.statsService.getH2HRecord(playerId, opponentId);
   }
 
-  @Post('seedings')
+  @Post('stats/seedings')
   computeSeedings(@Body() dto: SeedingRequestDto) {
     return this.statsService.computeSeedings(dto);
   }
 
-  @Get('tournaments/:tournamentId/report')
+  @Get('stats/tournaments/:tournamentId/report')
   getTournamentReport(@Param('tournamentId') tournamentId: string) {
     return this.statsService.getTournamentReport(tournamentId);
   }
