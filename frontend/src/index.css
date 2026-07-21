@@ -146,6 +146,10 @@ a.btn-primary, .navbar-links a.btn-primary { color: #fff; }
 @media (max-width: 768px) {
   .hero { grid-template-columns: 1fr; }
   .hero-visual { display: none; }
+  /* "Hi, {name}" has no width limit, so on narrow viewports it wraps across
+     multiple lines and crowds the rest of the navbar; the Sign out button
+     alone is enough context on mobile. */
+  .navbar-user { display: none; }
 }
 
 .hero-badge {
