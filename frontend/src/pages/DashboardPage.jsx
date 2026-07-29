@@ -1,108 +1,48 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { apiGet, apiPost, apiPatch } from "../api";
-import { STATUS_BADGE, SURFACE_LABEL } from "../constants";
-
-const TYPE_LABEL = {
-  SINGLES_MEN:    "Singles Men",
-  SINGLES_WOMEN:  "Singles Women",
-  DOUBLES_MEN:    "Doubles Men",
-  DOUBLES_WOMEN:  "Doubles Women",
-  MIXED_DOUBLES:  "Mixed Doubles",
-};
+import { apiGet } from "../api";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL } from "../constants";
+import Sidebar from "../components/Sidebar";
 
 export default function DashboardPage() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user } = useAuth();
   const [tournaments, setTournaments] = useState([]);
-  const [participations, setParticipations] = useState({}); // { tournamentId: { participantId, status } }
+  const [participations, setParticipations] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiGet("/api/tournaments/")
-      .then(r => r.json())
-      .then(data => setTournaments(Array.isArray(data) ? data : []))
-      .catch(() => setTournaments([]))
-      .finally(() => setLoading(false));
-
-    apiGet("/api/tournaments/me/participations")
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
+    Promise.all([
+      apiGet("/api/tournaments/").then(r => r.json()),
+      apiGet("/api/tournaments/me/participations").then(r => r.json()),
+    ])
+      .then(([ts, ps]) => {
+        setTournaments(Array.isArray(ts) ? ts : []);
+        if (Array.isArray(ps)) {
           const map = {};
-          data.forEach(p => { map[p.tournamentId] = { participantId: p.participantId, status: p.status }; });
+          ps.forEach(p => { map[p.tournamentId] = { participantId: p.id, status: p.status }; });
           setParticipations(map);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
-  async function quickApply(tournamentId, e) {
-    e.preventDefault();
-    const res = await apiPost(`/api/tournaments/${tournamentId}/participants`, { playerId: user.id });
-    if (res.ok) {
-      const p = await res.json();
-      setParticipations(prev => ({ ...prev, [tournamentId]: { participantId: p.id, status: p.status } }));
-    }
-  }
-
-  async function quickWithdraw(tournamentId, participantId, e) {
-    e.preventDefault();
-    const res = await apiPatch(`/api/tournaments/${tournamentId}/participants/${participantId}/withdraw`);
-    if (res.ok) {
-      setParticipations(prev => ({ ...prev, [tournamentId]: { ...prev[tournamentId], status: "WITHDRAWN" } }));
-    }
-  }
-
   const myTournaments = tournaments.filter(t => t.organiserId === user?.id);
-  const otherTournaments = tournaments.filter(t => t.organiserId !== user?.id);
+  const participatedTournaments = tournaments.filter(t => participations[t.id]);
+
+  const isOrganiser = user?.role === "ORGANISER";
 
   return (
     <div className="dash-layout">
-      {/* Sidebar */}
-      <aside className="sidebar">
-        <Link to="/" className="sidebar-logo">
-          <img src="/logo.png" alt="FPTC" className="sidebar-logo-img" />
-        </Link>
-        <nav className="sidebar-nav">
-          <Link to="/dashboard" className="sidebar-link sidebar-link-active">
-            <span>🏠</span> Dashboard
-          </Link>
-          {user?.role === "ORGANISER" && (
-            <Link to="/tournaments/new" className="sidebar-link">
-              <span>➕</span> New Tournament
-            </Link>
-          )}
-          <Link to="/tournaments" className="sidebar-link">
-            <span>🏆</span> Tournaments
-          </Link>
-          <Link to="/profile" className="sidebar-link">
-            <span>👤</span> Profile
-          </Link>
-        </nav>
-        <div className="sidebar-footer">
-          <div className="sidebar-user">
-            <div className="sidebar-avatar">{user?.name?.[0]?.toUpperCase()}</div>
-            <div>
-              <div className="sidebar-user-name">{user?.name}</div>
-              <div className="sidebar-user-role">{user?.role}</div>
-            </div>
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => { logout(); navigate("/"); }}>
-            Sign out
-          </button>
-        </div>
-      </aside>
-
-      {/* Main content */}
+      <Sidebar />
       <main className="dash-main">
         <div className="dash-header">
           <div>
             <h1 className="dash-title">Welcome back, {user?.name?.split(" ")[0]} 👋</h1>
             <p className="dash-sub">Here's what's happening with your tournaments.</p>
           </div>
-          {user?.role === "ORGANISER" && (
+          {isOrganiser && (
             <Link to="/tournaments/new" className="btn btn-primary btn-lg">
               + New Tournament
             </Link>
@@ -111,26 +51,49 @@ export default function DashboardPage() {
 
         {/* Stats row */}
         <div className="stats-row">
-          <div className="stat-card">
-            <div className="stat-value">{myTournaments.length}</div>
-            <div className="stat-label">My Tournaments</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{myTournaments.filter(t => t.status === "OPEN").length}</div>
-            <div className="stat-label">Open for Registration</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{myTournaments.filter(t => t.status === "IN_PROGRESS").length}</div>
-            <div className="stat-label">In Progress</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{tournaments.length}</div>
-            <div className="stat-label">Total Tournaments</div>
-          </div>
+          {isOrganiser ? (
+            <>
+              <div className="stat-card">
+                <div className="stat-value">{myTournaments.length}</div>
+                <div className="stat-label">My Tournaments</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{myTournaments.filter(t => t.status === "OPEN").length}</div>
+                <div className="stat-label">Open for Registration</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{myTournaments.filter(t => t.status === "IN_PROGRESS").length}</div>
+                <div className="stat-label">In Progress</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{tournaments.length}</div>
+                <div className="stat-label">Total Tournaments</div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="stat-card">
+                <div className="stat-value">{tournaments.length}</div>
+                <div className="stat-label">Total Tournaments</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{participatedTournaments.filter(t => participations[t.id]?.status === "APPROVED").length}</div>
+                <div className="stat-label">Approved Entries</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{participatedTournaments.filter(t => participations[t.id]?.status === "PENDING").length}</div>
+                <div className="stat-label">Pending Applications</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">{tournaments.filter(t => t.status === "OPEN").length}</div>
+                <div className="stat-label">Open for Registration</div>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* My tournaments */}
-        {user?.role === "ORGANISER" && (
+        {/* Organiser: my tournaments */}
+        {isOrganiser && (
           <section className="dash-section">
             <div className="dash-section-header">
               <h2>My Tournaments</h2>
@@ -146,43 +109,43 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="tournament-grid">
-                {myTournaments.map(t => <TournamentCard key={t.id} t={t} isOwn />)}
+                {myTournaments.map(t => <TournamentCard key={t.id} t={t} />)}
               </div>
             )}
           </section>
         )}
 
-        {/* Browse all tournaments */}
-        <section className="dash-section">
-          <div className="dash-section-header">
-            <h2>All Tournaments</h2>
-          </div>
-          {loading ? (
-            <div className="dash-empty">Loading…</div>
-          ) : otherTournaments.length === 0 ? (
-            <div className="dash-empty">No other tournaments at the moment.</div>
-          ) : (
-            <div className="tournament-grid">
-              {otherTournaments.map(t => (
-                <TournamentCard
-                  key={t.id}
-                  t={t}
-                  participation={participations[t.id]}
-                  onApply={quickApply}
-                  onWithdraw={quickWithdraw}
-                />
-              ))}
+        {/* Member: my participations */}
+        {!isOrganiser && (
+          <section className="dash-section">
+            <div className="dash-section-header">
+              <h2>My Participations</h2>
+              <Link to="/tournaments" className="form-link">Browse all →</Link>
             </div>
-          )}
-        </section>
+            {loading ? (
+              <div className="dash-empty">Loading…</div>
+            ) : participatedTournaments.length === 0 ? (
+              <div className="dash-empty">
+                <div className="dash-empty-icon">🎾</div>
+                <p>You haven't applied to any tournaments yet.</p>
+                <Link to="/tournaments" className="btn btn-primary">Browse Tournaments</Link>
+              </div>
+            ) : (
+              <div className="tournament-grid">
+                {participatedTournaments.map(t => (
+                  <TournamentCard key={t.id} t={t} participationStatus={participations[t.id]?.status} />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </main>
     </div>
   );
 }
 
-function TournamentCard({ t, isOwn, participation, onApply, onWithdraw }) {
+function TournamentCard({ t, participationStatus }) {
   const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.DRAFT;
-  const status = participation?.status;
 
   return (
     <Link to={`/tournaments/${t.id}`} className="t-card">
@@ -195,27 +158,12 @@ function TournamentCard({ t, isOwn, participation, onApply, onWithdraw }) {
         <span>{TYPE_LABEL[t.tournamentType] ?? t.tournamentType}</span>
         {t.city && <span>📍 {t.city}</span>}
       </div>
-      <div className="t-card-dates">
-        {t.startDate} → {t.endDate}
-      </div>
-
-      {!isOwn && (
-        <div className="t-card-action" onClick={e => e.stopPropagation()}>
-          {t.status === "OPEN" && !status && (
-            <button className="btn btn-primary btn-sm" onClick={e => onApply(t.id, e)}>Apply</button>
-          )}
-          {status === "PENDING" && (
-            <span className="t-card-status-pill t-card-status-pending">Pending</span>
-          )}
-          {status === "APPROVED" && t.status === "OPEN" && (
-            <button className="btn btn-ghost btn-sm" onClick={e => onWithdraw(t.id, participation.participantId, e)}>Withdraw</button>
-          )}
-          {status === "APPROVED" && t.status !== "OPEN" && (
-            <span className="t-card-status-pill t-card-status-approved">Registered</span>
-          )}
-          {status === "WITHDRAWN" && (
-            <span className="t-card-status-pill" style={{ color: "#6b7280" }}>Withdrawn</span>
-          )}
+      <div className="t-card-dates">{t.startDate} → {t.endDate}</div>
+      {participationStatus && (
+        <div className="t-card-action">
+          <span className={`t-card-status-pill t-card-status-${participationStatus.toLowerCase()}`}>
+            {participationStatus.charAt(0) + participationStatus.slice(1).toLowerCase()}
+          </span>
         </div>
       )}
     </Link>

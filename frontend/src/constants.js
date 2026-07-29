@@ -6,6 +6,14 @@ export const STATUS_BADGE = {
   CANCELLED:   { label: "Cancelled",   color: "#dc2626" },
 };
 
+export const TYPE_LABEL = {
+  SINGLES_MEN:   "Singles Men",
+  SINGLES_WOMEN: "Singles Women",
+  DOUBLES_MEN:   "Doubles Men",
+  DOUBLES_WOMEN: "Doubles Women",
+  MIXED_DOUBLES: "Mixed Doubles",
+};
+
 export const SURFACE_LABEL = {
   CLAY:             "Clay",
   HARD_OUTDOOR:     "Hard (Outdoor)",

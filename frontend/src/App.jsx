@@ -5,6 +5,8 @@ import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
+import TournamentsPage from "./pages/TournamentsPage";
+import ProfilePage from "./pages/ProfilePage";
 import CreateTournamentPage from "./pages/CreateTournamentPage";
 import TournamentDetailPage from "./pages/TournamentDetailPage";
 import "./index.css";
@@ -21,9 +23,10 @@ function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/dashboard" element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
+      <Route path="/tournaments" element={<PrivateRoute><TournamentsPage /></PrivateRoute>} />
       <Route path="/tournaments/new" element={<PrivateRoute><CreateTournamentPage /></PrivateRoute>} />
       <Route path="/tournaments/:id" element={<PrivateRoute><TournamentDetailPage /></PrivateRoute>} />
-      <Route path="/tournaments" element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
+      <Route path="/profile" element={<PrivateRoute><ProfilePage /></PrivateRoute>} />
     </Routes>
   );
 }
