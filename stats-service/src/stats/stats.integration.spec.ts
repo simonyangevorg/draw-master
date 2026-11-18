@@ -5,6 +5,7 @@ import { StatsModule } from './stats.module';
 import { StatsService } from './stats.service';
 import { PlayerStatsEntity } from './entities/player-stats.entity';
 import { H2HEntity } from './entities/h2h.entity';
+import { ProcessedEventEntity } from './entities/processed-event.entity';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL
   || 'postgresql://tennis:tennis_secret@localhost:5432/test';
@@ -15,7 +16,7 @@ async function buildApp(): Promise<INestApplication> {
       TypeOrmModule.forRoot({
         type: 'postgres',
         url: DATABASE_URL,
-        entities: [PlayerStatsEntity, H2HEntity],
+        entities: [PlayerStatsEntity, H2HEntity, ProcessedEventEntity],
         synchronize: true,
       }),
       StatsModule,

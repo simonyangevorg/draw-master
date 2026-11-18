@@ -1,26 +1,43 @@
-import { Controller, Get, Post, Param, Body, HttpCode } from '@nestjs/common';
-import { EventPattern, Payload } from '@nestjs/microservices';
+import { Controller, Get, Post, Param, Body, HttpCode, Logger } from '@nestjs/common';
+import { Ctx, EventPattern, Payload, RmqContext } from '@nestjs/microservices';
 import { StatsService } from './stats.service';
 import { MatchResultDto } from './dto/match-result.dto';
 import { SeedingRequestDto } from './dto/seeding-request.dto';
 
 @Controller()
 export class StatsController {
+  private readonly logger = new Logger(StatsController.name);
+
   constructor(private readonly statsService: StatsService) {}
 
   // ── RabbitMQ consumer ─────────────────────────────────────────────────────
 
+  // The queue runs with manual acks (noAck: false, prefetch 1), so every
+  // message MUST be acked or nacked, otherwise the channel stalls after the
+  // first event and nothing else is ever consumed.
   @EventPattern('match.completed')
-  handleMatchCompleted(@Payload() event: any) {
-    this.statsService.recordResult({
-      matchId: event.matchId,
-      player1Id: event.player1Id,
-      player2Id: event.player2Id,
-      winnerId: event.winnerPlayerId,
-      sets: event.sets,
-      surface: (event.surface ?? '').toLowerCase(),
-      tournamentId: event.tournamentId,
-    });
+  async handleMatchCompleted(@Payload() event: any, @Ctx() ctx: RmqContext) {
+    const channel = ctx.getChannelRef();
+    const message = ctx.getMessage();
+    try {
+      await this.statsService.recordResult({
+        matchId: event.matchId,
+        player1Id: event.player1Id,
+        player2Id: event.player2Id,
+        winnerId: event.winnerPlayerId,
+        sets: event.sets,
+        surface: (event.surface ?? '').toLowerCase(),
+        tournamentId: event.tournamentId,
+      });
+      channel.ack(message);
+    } catch (err) {
+      // Don't requeue: a poison message would redeliver forever. Log the
+      // payload so it can be replayed by hand once the cause is fixed.
+      this.logger.error(
+        `match.completed failed, dropping: ${(err as Error).message} payload=${JSON.stringify(event)}`,
+      );
+      channel.nack(message, false, false);
+    }
   }
 
   // ── HTTP endpoints ────────────────────────────────────────────────────────

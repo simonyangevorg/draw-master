@@ -5,6 +5,7 @@ import { MatchResultDto } from './dto/match-result.dto';
 import { SeedingRequestDto } from './dto/seeding-request.dto';
 import { PlayerStatsEntity } from './entities/player-stats.entity';
 import { H2HEntity } from './entities/h2h.entity';
+import { ProcessedEventEntity } from './entities/processed-event.entity';
 
 const SURFACE_BUCKETS: Record<string, 'clay' | 'grass' | 'hard'> = {
   clay: 'clay',
@@ -41,6 +42,8 @@ export class StatsService {
     private readonly statsRepo: Repository<PlayerStatsEntity>,
     @InjectRepository(H2HEntity)
     private readonly h2hRepo: Repository<H2HEntity>,
+    @InjectRepository(ProcessedEventEntity)
+    private readonly processedRepo: Repository<ProcessedEventEntity>,
   ) {}
 
   private async getOrCreateStats(playerId: string): Promise<PlayerStatsEntity> {
@@ -55,7 +58,12 @@ export class StatsService {
     return this.h2hRepo.save(this.h2hRepo.create({ playerId, opponentId, wins: 0, losses: 0 }));
   }
 
-  async recordResult(dto: MatchResultDto): Promise<{ recorded: string }> {
+  async recordResult(dto: MatchResultDto): Promise<{ recorded: string; duplicate?: true }> {
+    // Idempotency: an event for a match we've already counted is a no-op.
+    if (await this.processedRepo.findOne({ where: { matchId: dto.matchId } })) {
+      return { recorded: dto.matchId, duplicate: true };
+    }
+
     const loserId = dto.winnerId === dto.player1Id ? dto.player2Id : dto.player1Id;
 
     const p1Stats = await this.getOrCreateStats(dto.player1Id);
@@ -68,11 +76,16 @@ export class StatsService {
     loserStats.matchesPlayed++;
     loserStats.losses++;
 
-    for (const set of dto.sets) {
-      p1Stats.setsWon += set.p1;
-      p1Stats.setsLost += set.p2;
-      p2Stats.setsWon += set.p2;
-      p2Stats.setsLost += set.p1;
+    // Each set goes to whichever side won more games in it (a 6-0 6-0 win is
+    // 2 sets, not 12). Equal games (unfinished/retired set) count for nobody.
+    for (const set of dto.sets ?? []) {
+      if (set.p1 > set.p2) {
+        p1Stats.setsWon++;
+        p2Stats.setsLost++;
+      } else if (set.p2 > set.p1) {
+        p2Stats.setsWon++;
+        p1Stats.setsLost++;
+      }
     }
 
     const surface = normalizeSurface(dto.surface);
@@ -87,6 +100,8 @@ export class StatsService {
     const loserH2H = await this.getOrCreateH2H(loserId, dto.winnerId);
     loserH2H.losses++;
     await this.h2hRepo.save([winnerH2H, loserH2H]);
+
+    await this.processedRepo.save(this.processedRepo.create({ matchId: dto.matchId }));
 
     return { recorded: dto.matchId };
   }

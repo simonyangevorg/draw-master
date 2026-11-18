@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { AppModule } from './app.module';
+import { requireEnv } from './env';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -10,7 +11,7 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.RMQ,
     options: {
-      urls: [process.env.RABBITMQ_URL || 'amqp://tennis:tennis_secret@rabbitmq:5672'],
+      urls: [requireEnv('RABBITMQ_URL')],
       queue: 'stats_queue',
       queueOptions: { durable: true },
       noAck: false,

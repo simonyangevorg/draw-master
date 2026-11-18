@@ -3,9 +3,16 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { StatsService } from './stats.service';
 import { PlayerStatsEntity } from './entities/player-stats.entity';
 import { H2HEntity } from './entities/h2h.entity';
+import { ProcessedEventEntity } from './entities/processed-event.entity';
 
 describe('StatsService', () => {
   let service: StatsService;
+
+  const mockProcessedRepo = {
+    findOne: jest.fn(),
+    create: jest.fn((data) => data),
+    save: jest.fn(async (e) => e),
+  };
 
   const mockStatsRepo = {
     findOne: jest.fn(),
@@ -33,10 +40,76 @@ describe('StatsService', () => {
         StatsService,
         { provide: getRepositoryToken(PlayerStatsEntity), useValue: mockStatsRepo },
         { provide: getRepositoryToken(H2HEntity), useValue: mockH2HRepo },
+        { provide: getRepositoryToken(ProcessedEventEntity), useValue: mockProcessedRepo },
       ],
     }).compile();
 
+    mockProcessedRepo.findOne.mockResolvedValue(null);
+    mockProcessedRepo.create.mockImplementation((data) => data);
+    mockProcessedRepo.save.mockImplementation(async (e) => e);
+
     service = module.get<StatsService>(StatsService);
+  });
+
+  describe('recordResult: set counting and idempotency', () => {
+    const fresh = (id: string) => ({ playerId: id, matchesPlayed: 0, wins: 0, losses: 0, setsWon: 0, setsLost: 0, surfaceWins: { clay: 0, grass: 0, hard: 0 }, tournamentWins: 0 });
+
+    it('counts sets won, not games (6-0 6-0 = 2 sets)', async () => {
+      const p1 = fresh('p1');
+      const p2 = fresh('p2');
+      mockStatsRepo.findOne.mockResolvedValueOnce(p1).mockResolvedValueOnce(p2);
+      mockH2HRepo.findOne.mockResolvedValue(null);
+
+      await service.recordResult({
+        matchId: 'm-sets', tournamentId: 't', player1Id: 'p1', player2Id: 'p2', winnerId: 'p1',
+        sets: [{ p1: 6, p2: 0 }, { p1: 6, p2: 0 }],
+      });
+
+      expect(p1.setsWon).toBe(2);
+      expect(p1.setsLost).toBe(0);
+      expect(p2.setsWon).toBe(0);
+      expect(p2.setsLost).toBe(2);
+    });
+
+    it('splits a three-set match 2-1', async () => {
+      const p1 = fresh('p1');
+      const p2 = fresh('p2');
+      mockStatsRepo.findOne.mockResolvedValueOnce(p1).mockResolvedValueOnce(p2);
+      mockH2HRepo.findOne.mockResolvedValue(null);
+
+      await service.recordResult({
+        matchId: 'm-3', tournamentId: 't', player1Id: 'p1', player2Id: 'p2', winnerId: 'p1',
+        sets: [{ p1: 7, p2: 6 }, { p1: 4, p2: 6 }, { p1: 10, p2: 8 }],
+      });
+
+      expect(p1.setsWon).toBe(2);
+      expect(p2.setsWon).toBe(1);
+    });
+
+    it('ignores an event whose matchId was already processed', async () => {
+      mockProcessedRepo.findOne.mockResolvedValueOnce({ matchId: 'dup' });
+
+      const result = await service.recordResult({
+        matchId: 'dup', tournamentId: 't', player1Id: 'p1', player2Id: 'p2', winnerId: 'p1',
+        sets: [{ p1: 6, p2: 0 }],
+      });
+
+      expect(result).toEqual({ recorded: 'dup', duplicate: true });
+      expect(mockStatsRepo.save).not.toHaveBeenCalled();
+      expect(mockH2HRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('marks the matchId processed after applying it', async () => {
+      mockStatsRepo.findOne.mockResolvedValueOnce(fresh('p1')).mockResolvedValueOnce(fresh('p2'));
+      mockH2HRepo.findOne.mockResolvedValue(null);
+
+      await service.recordResult({
+        matchId: 'm-new', tournamentId: 't', player1Id: 'p1', player2Id: 'p2', winnerId: 'p1',
+        sets: [{ p1: 6, p2: 4 }],
+      });
+
+      expect(mockProcessedRepo.save).toHaveBeenCalledWith({ matchId: 'm-new' });
+    });
   });
 
   describe('recordResult', () => {

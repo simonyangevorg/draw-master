@@ -4,9 +4,10 @@ import { StatsController } from './stats.controller';
 import { StatsService } from './stats.service';
 import { PlayerStatsEntity } from './entities/player-stats.entity';
 import { H2HEntity } from './entities/h2h.entity';
+import { ProcessedEventEntity } from './entities/processed-event.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PlayerStatsEntity, H2HEntity])],
+  imports: [TypeOrmModule.forFeature([PlayerStatsEntity, H2HEntity, ProcessedEventEntity])],
   controllers: [StatsController],
   providers: [StatsService],
 })
