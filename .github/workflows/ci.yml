@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets the Deploy workflow run the full test suite as its first job.
+  workflow_call:
 
 jobs:
   unit-tests:

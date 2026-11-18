@@ -1,0 +1,63 @@
+name: Deploy
+
+# One-click production deploy. Never runs on its own: open GitHub → Actions →
+# "Deploy" → "Run workflow". It runs the whole CI suite first; only if every
+# test passes does it SSH to the server and run infra/deploy/deploy.sh for this
+# exact commit (backup → rebuild → smoke test → automatic code rollback on failure).
+#
+# Repository secrets it needs (Settings → Secrets and variables → Actions):
+#   DEPLOY_SSH_KEY      private half of the deploy key (the server only lets that
+#                       key run "deploy <sha>", nothing else)
+#   DEPLOY_HOST         deploy@<server-ip>
+#   DEPLOY_KNOWN_HOSTS  the server's SSH host key line (pins the server identity)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://drawmaster.cloud
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy ${{ github.sha }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 \
+            "$DEPLOY_HOST" "deploy ${GITHUB_SHA}"
+
+      - name: Check the public site
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://drawmaster.cloud/)
+          echo "https://drawmaster.cloud/ -> $code"
+          test "$code" = 200
+
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
