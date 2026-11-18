@@ -204,6 +204,41 @@ describe('TournamentsService', () => {
 
       await expect(service.update('tournament-1', {}, 'other')).rejects.toThrow(ForbiddenException);
     });
+
+    it('refuses format changes once the tournament is OPEN', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'OPEN' } as any));
+
+      await expect(
+        service.update('tournament-1', { drawFormat: 'ROUND_ROBIN' }, 'organiser-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows format changes while DRAFT', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' } as any));
+      mockTournamentsRepo.save.mockImplementation(async (x) => x);
+
+      await service.update('tournament-1', { drawFormat: 'ROUND_ROBIN' }, 'organiser-1');
+
+      expect(mockTournamentsRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ drawFormat: 'ROUND_ROBIN' }),
+      );
+    });
+
+    it('refuses any edit once play has started', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' } as any));
+
+      await expect(
+        service.update('tournament-1', { name: 'x' }, 'organiser-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects an end date before the start date with 400, not 500', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' } as any));
+
+      await expect(
+        service.update('tournament-1', { startDate: '2026-06-10', endDate: '2026-06-01' }, 'organiser-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('remove', () => {
@@ -388,15 +423,26 @@ describe('TournamentsService', () => {
   });
 
   describe('withdrawParticipant', () => {
-    it('organiser can withdraw any participant', async () => {
+    it('the tournament owner can withdraw any participant', async () => {
       const participant = makeParticipant({ playerId: 'player-99' });
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.withdrawParticipant('tournament-1', participant.id, 'organiser-1', true);
+      const result = await service.withdrawParticipant('tournament-1', participant.id, 'organiser-1');
 
       expect(result.status).toBe('WITHDRAWN');
+    });
+
+    it("an organiser of another tournament cannot withdraw players from this one", async () => {
+      const participant = makeParticipant({ playerId: 'player-99' });
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockParticipantsRepo.findOne.mockResolvedValue(participant);
+
+      await expect(
+        service.withdrawParticipant('tournament-1', participant.id, 'other-organiser'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockParticipantsRepo.save).not.toHaveBeenCalled();
     });
 
     it('player can withdraw themselves', async () => {
@@ -405,7 +451,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.withdrawParticipant('tournament-1', participant.id, 'player-1', false);
+      const result = await service.withdrawParticipant('tournament-1', participant.id, 'player-1');
 
       expect(result.status).toBe('WITHDRAWN');
     });
@@ -416,7 +462,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
 
       await expect(
-        service.withdrawParticipant('tournament-1', participant.id, 'player-1', false),
+        service.withdrawParticipant('tournament-1', participant.id, 'player-1'),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -425,7 +471,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.withdrawParticipant('tournament-1', 'missing', 'organiser-1', true),
+        service.withdrawParticipant('tournament-1', 'missing', 'organiser-1'),
       ).rejects.toThrow(NotFoundException);
     });
   });

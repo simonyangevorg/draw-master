@@ -10,6 +10,7 @@ import { ParticipantEntity } from './entities/participant.entity';
 import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { UpdateTournamentDto, FORMAT_FIELDS } from './dto/update-tournament.dto';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
@@ -71,10 +72,28 @@ export class TournamentsService {
     return this.tournamentsRepo.save(t);
   }
 
-  async update(id: string, dto: Partial<CreateTournamentDto>, organiserId: string) {
+  async update(id: string, dto: UpdateTournamentDto, organiserId: string) {
     const t = await this.findOne(id);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
-    Object.assign(t, dto);
+    // Descriptive fields are editable in DRAFT and OPEN; anything that shapes
+    // the draw only in DRAFT. Once play has started the tournament is frozen.
+    if (t.status !== 'DRAFT' && t.status !== 'OPEN') {
+      throw new BadRequestException(`A tournament that is ${t.status} can no longer be edited`);
+    }
+    const formatChanges = FORMAT_FIELDS.filter((f) => (dto as any)[f] !== undefined);
+    if (t.status !== 'DRAFT' && formatChanges.length) {
+      throw new BadRequestException(`Only a DRAFT tournament can change: ${formatChanges.join(', ')}`);
+    }
+    const start = dto.startDate ?? (t as any).startDate;
+    const end = dto.endDate ?? (t as any).endDate;
+    if (start && end && new Date(end) < new Date(start)) {
+      throw new BadRequestException('endDate must be on or after startDate');
+    }
+    // Copy only the validated DTO fields; status/organiserId/clubId can't
+    // arrive here (forbidNonWhitelisted rejects them with 400).
+    for (const [k, v] of Object.entries(dto)) {
+      if (v !== undefined) (t as any)[k] = v;
+    }
     return this.tournamentsRepo.save(t);
   }
 
@@ -146,12 +165,14 @@ export class TournamentsService {
     return saved;
   }
 
-  async withdrawParticipant(tournamentId: string, participantId: string, requesterId: string, isOrganiser: boolean) {
+  async withdrawParticipant(tournamentId: string, participantId: string, requesterId: string) {
     const t = await this.findOne(tournamentId);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
-    // Organiser can withdraw anyone; a player can only withdraw themselves
-    if (!isOrganiser && p.playerId !== requesterId) throw new ForbiddenException('Not allowed');
+    // Only this tournament's owner may withdraw anyone; a player may withdraw
+    // themselves. Organising some OTHER tournament grants nothing here.
+    const isOwner = t.organiserId === requesterId;
+    if (!isOwner && p.playerId !== requesterId) throw new ForbiddenException('Not allowed');
     p.status = 'WITHDRAWN';
     const saved = await this.participantsRepo.save(p);
     this.auditLogger.record({ actorId: requesterId, action: 'PARTICIPANT_WITHDRAWN', targetId: participantId, tournamentId });

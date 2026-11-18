@@ -1,13 +1,15 @@
 import {
   Controller, Get, Post, Patch, Delete,
-  Param, ParseUUIDPipe, Body, HttpCode, UseGuards,
+  Param, ParseUUIDPipe, Body, HttpCode, UseGuards, ValidationPipe,
 } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
 import { JwtGuard } from '../auth/jwt.guard';
+import { OrganiserGuard } from '../auth/organiser.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 
 @Controller()
@@ -41,14 +43,19 @@ export class TournamentsController {
 
   @Post('tournaments')
   @HttpCode(201)
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, OrganiserGuard)
   create(@Body() dto: CreateTournamentDto, @CurrentUser() user: any) {
     return this.tournamentsService.create(dto, user.sub);
   }
 
   @Patch('tournaments/:id')
   @UseGuards(JwtGuard)
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: Partial<CreateTournamentDto>, @CurrentUser() user: any) {
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+    dto: UpdateTournamentDto,
+    @CurrentUser() user: any,
+  ) {
     return this.tournamentsService.update(id, dto, user.sub);
   }
 
@@ -89,7 +96,7 @@ export class TournamentsController {
   @Patch('tournaments/:id/participants/:pid/withdraw')
   @UseGuards(JwtGuard)
   withdrawParticipant(@Param('id', ParseUUIDPipe) id: string, @Param('pid', ParseUUIDPipe) pid: string, @CurrentUser() user: any) {
-    return this.tournamentsService.withdrawParticipant(id, pid, user.sub, user.role === 'ORGANISER');
+    return this.tournamentsService.withdrawParticipant(id, pid, user.sub);
   }
 
   @Patch('tournaments/:id/participants/:pid/seed')
