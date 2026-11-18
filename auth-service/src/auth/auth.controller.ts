@@ -9,6 +9,7 @@ import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtGuard } from './jwt.guard';
+import { LOGIN_THROTTLE_LIMIT } from '../env';
 import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
 
@@ -27,7 +28,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @UseGuards(ThrottlerGuard)
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: LOGIN_THROTTLE_LIMIT } })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }

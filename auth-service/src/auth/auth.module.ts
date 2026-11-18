@@ -7,7 +7,7 @@ import { AuthService } from './auth.service';
 import { JwtGuard } from './jwt.guard';
 import { UserEntity } from './entities/user.entity';
 import { AuditLogger } from './audit-logger.service';
-import { requireJwtSecret } from '../env';
+import { requireJwtSecret, LOGIN_THROTTLE_LIMIT } from '../env';
 
 @Module({
   imports: [
@@ -16,8 +16,8 @@ import { requireJwtSecret } from '../env';
       secret: requireJwtSecret(),
       signOptions: { expiresIn: '1h' },
     }),
-    // 5 login attempts per IP per 60s — see @Throttle() on AuthController#login
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 5 }]),
+    // Login attempts per IP per 60s (default 5, env LOGIN_THROTTLE_LIMIT); see @Throttle() on AuthController#login
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: LOGIN_THROTTLE_LIMIT }]),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtGuard, AuditLogger],

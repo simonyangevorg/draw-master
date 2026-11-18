@@ -61,6 +61,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      LOGIN_THROTTLE_LIMIT: ${LOGIN_THROTTLE_LIMIT:-5}
     depends_on:
       postgres:
         condition: service_healthy

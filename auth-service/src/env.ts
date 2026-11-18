@@ -27,3 +27,12 @@ export function requireJwtSecret(): string {
   }
   return secret;
 }
+
+/**
+ * Login attempts allowed per client per minute. Defaults to 5. CI/E2E raise it
+ * because the whole suite logs in from one machine within a minute.
+ */
+export const LOGIN_THROTTLE_LIMIT = (() => {
+  const n = Number(process.env.LOGIN_THROTTLE_LIMIT);
+  return Number.isInteger(n) && n > 0 ? n : 5;
+})();
