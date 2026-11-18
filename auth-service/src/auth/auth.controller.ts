@@ -66,11 +66,17 @@ export class AuthController {
       return {};
     }
     try {
-      const payload = this.jwtService.verify<{ sub: string; email: string; name: string; role: string }>(header.slice(7), { algorithms: ['HS256'] });
-      res.setHeader('X-User-Sub',   payload.sub);
-      res.setHeader('X-User-Email', payload.email);
-      res.setHeader('X-User-Name',  payload.name);
-      res.setHeader('X-User-Role',  payload.role);
+      const payload = this.jwtService.verify<{ sub?: string; email?: string; name?: string; role?: string; type?: string }>(header.slice(7), { algorithms: ['HS256'] });
+      // Only access tokens identify a caller. A refresh token (type: 'refresh',
+      // no profile claims) must never be accepted in place of one.
+      if (payload.type === 'refresh' || !payload.sub) {
+        res.status(401);
+        return { message: 'Invalid or expired token' };
+      }
+      res.setHeader('X-User-Sub', payload.sub);
+      if (payload.email) res.setHeader('X-User-Email', payload.email);
+      if (payload.name)  res.setHeader('X-User-Name',  payload.name);
+      if (payload.role)  res.setHeader('X-User-Role',  payload.role);
       return {};
     } catch {
       res.status(401);

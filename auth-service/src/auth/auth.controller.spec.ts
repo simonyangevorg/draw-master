@@ -81,6 +81,31 @@ describe('AuthController', () => {
       expect(res.status).toHaveBeenCalledWith(401);
       expect(result).toEqual({ message: 'Invalid or expired token' });
     });
+
+    it('returns 401 for a refresh token presented as an access token', () => {
+      mockJwtService.verify.mockReturnValue({ sub: 'user-1', type: 'refresh' });
+      const req = { headers: { authorization: 'Bearer refresh-token' } } as any;
+      const res = makeRes();
+
+      const result = controller.validate(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.setHeader).not.toHaveBeenCalled();
+      expect(result).toEqual({ message: 'Invalid or expired token' });
+    });
+
+    it('never sets a header to undefined when an optional claim is missing', () => {
+      mockJwtService.verify.mockReturnValue({ sub: 'user-1', role: 'PLAYER' });
+      const req = { headers: { authorization: 'Bearer t' } } as any;
+      const res = makeRes();
+
+      controller.validate(req, res);
+
+      for (const call of res.setHeader.mock.calls) {
+        expect(call[1]).toBeDefined();
+      }
+      expect(res.setHeader).toHaveBeenCalledWith('X-User-Sub', 'user-1');
+    });
   });
 
   describe('updateRole', () => {

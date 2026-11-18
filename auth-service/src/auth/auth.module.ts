@@ -7,12 +7,13 @@ import { AuthService } from './auth.service';
 import { JwtGuard } from './jwt.guard';
 import { UserEntity } from './entities/user.entity';
 import { AuditLogger } from './audit-logger.service';
+import { requireJwtSecret } from '../env';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([UserEntity]),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'fptc_super_secret_change_in_prod',
+      secret: requireJwtSecret(),
       signOptions: { expiresIn: '1h' },
     }),
     // 5 login attempts per IP per 60s — see @Throttle() on AuthController#login

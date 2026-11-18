@@ -1,3 +1,4 @@
+import { requireEnv } from '../env';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientsModule, Transport } from '@nestjs/microservices';
@@ -23,7 +24,7 @@ import { AuditLogger } from '../audit/audit-logger.service';
         name: 'STATS_CLIENT',
         transport: Transport.RMQ,
         options: {
-          urls: [process.env.RABBITMQ_URL || 'amqp://tennis:tennis_secret@rabbitmq:5672'],
+          urls: [requireEnv('RABBITMQ_URL')],
           queue: 'stats_queue',
           queueOptions: { durable: true },
         },
@@ -32,7 +33,7 @@ import { AuditLogger } from '../audit/audit-logger.service';
         name: 'NOTIFICATIONS_CLIENT',
         transport: Transport.RMQ,
         options: {
-          urls: [process.env.RABBITMQ_URL || 'amqp://tennis:tennis_secret@rabbitmq:5672'],
+          urls: [requireEnv('RABBITMQ_URL')],
           queue: 'notifications_queue',
           queueOptions: { durable: true },
         },
