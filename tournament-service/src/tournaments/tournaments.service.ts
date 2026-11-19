@@ -792,7 +792,12 @@ export class TournamentsService {
     const e1 = byId.get(dto.participantId1)?.eventId;
     const e2 = byId.get(dto.participantId2)?.eventId;
     if (e1 && e2 && e1 !== e2) throw new BadRequestException('Players can only be swapped within one event');
-    const matches = await this.matchesRepo.find({ where: e1 || e2 ? { tournamentId, eventId: e1 || e2 } : { tournamentId } });
+    let matches = await this.matchesRepo.find({ where: e1 || e2 ? { tournamentId, eventId: e1 || e2 } : { tournamentId } });
+    // Groups + knockout (F-09): once group results exist, a swap only moves
+    // players in the knockout (their group matches are history).
+    if (matches.some((m) => m.stage === 'GROUP' && (m.status === 'COMPLETED' || m.status === 'WALKOVER'))) {
+      matches = matches.filter((m) => m.stage === 'KNOCKOUT');
+    }
     this.assertDrawEditable(matches);
     const changed: TournamentMatchEntity[] = [];
     for (const m of matches) {
@@ -812,7 +817,9 @@ export class TournamentsService {
     this.assertManage(actor, t);
     const match = await this.matchesRepo.findOne({ where: { id: matchId, tournamentId } });
     if (!match) throw new NotFoundException('Match not found');
-    this.assertDrawEditable(await this.matchesRepo.find({ where: { tournamentId, eventId: match.eventId } }));
+    // A knockout slot stays editable until the knockout starts, whatever the groups did (F-09).
+    const sameEvent = await this.matchesRepo.find({ where: { tournamentId, eventId: match.eventId } });
+    this.assertDrawEditable(match.stage === 'KNOCKOUT' ? sameEvent.filter((m) => m.stage === 'KNOCKOUT') : sameEvent);
     if (slot === 'participant1Id') match.participant1Id = participantId;
     else if (slot === 'participant2Id') match.participant2Id = participantId;
     else throw new BadRequestException('slot must be participant1Id or participant2Id');
@@ -928,6 +935,7 @@ export class TournamentsService {
       targetId: matchId, tournamentId, winnerId: dto.winnerId,
     });
 
+    if (saved.stage === 'GROUP' && saved.groupId) await this.fillKnockoutFromGroup(t, saved.eventId, saved.groupId);
     await this.settleEvent(t, saved.eventId);
 
     const event = this.resultEvent(t, saved);
@@ -975,6 +983,55 @@ export class TournamentsService {
       await this.tournamentsRepo.update(t.id, { status: tStatus });
       t.status = tStatus;
     }
+  }
+
+  /**
+   * F-09: when a group's last match is in, its knockout slots ("A1", "A2"...)
+   * take the players at those places in its standings; a slot facing "BYE"
+   * sends its player straight on. Re-run on every group result, so a
+   * correction re-fills the slots, until the knockout starts: from then the
+   * organiser moves players by hand.
+   */
+  private async fillKnockoutFromGroup(t: TournamentEntity, eventId: string, groupId: string) {
+    const ev = (t.events ?? []).find((e) => e.id === eventId);
+    const group = (t.groups ?? []).find((g) => g.id === groupId);
+    if (!ev || ev.drawFormat !== 'GROUP_STAGE_KNOCKOUT' || !group) return;
+    const letter = GROUP_LETTERS[group.position];
+    const matches = await this.matchesRepo.find({ where: { eventId } });
+    const ko = matches.filter((m) => m.stage === 'KNOCKOUT');
+    const played = (m: TournamentMatchEntity) => m.status === 'COMPLETED' || m.status === 'WALKOVER';
+    if (ko.some(played)) return; // the knockout has started: the organiser's call now
+
+    const groupMatches = matches.filter((m) => m.stage === 'GROUP' && m.groupId === groupId);
+    const complete = groupMatches.length > 0 && groupMatches.every(played);
+    const rows = complete ? computeStandings(group.participantIds, this.withRules(t, groupMatches)) : [];
+    const byId = new Map(ko.map((m) => [m.id, m]));
+    const changed = new Set<TournamentMatchEntity>();
+
+    for (const m of ko.filter((x) => x.round === 1)) {
+      for (const side of [1, 2] as const) {
+        const label = side === 1 ? m.slot1 : m.slot2;
+        if (!label || label[0] !== letter) continue;
+        const pid = complete ? rows[Number(label.slice(1)) - 1]?.participantId ?? null : null;
+        const key = side === 1 ? 'participant1Id' : 'participant2Id';
+        if (m[key] !== pid) { m[key] = pid; changed.add(m); }
+      }
+      // A qualifier facing a bye goes straight through.
+      const byeSide = m.slot1 === 'BYE' ? 1 : m.slot2 === 'BYE' ? 2 : 0;
+      if (byeSide) {
+        const player = byeSide === 1 ? m.participant2Id : m.participant1Id;
+        const next = m.nextMatchId ? byId.get(m.nextMatchId) : null;
+        m.status = player ? 'BYE' : 'SCHEDULED';
+        m.winnerId = player ?? null;
+        changed.add(m);
+        if (next) {
+          const key = (m.nextSlot ?? (m.position % 2 === 0 ? 1 : 2)) === 1 ? 'participant1Id' : 'participant2Id';
+          if (next[key] !== (player ?? null)) { next[key] = player ?? null; changed.add(next); }
+        }
+      }
+    }
+    if (changed.size) await this.matchesRepo.save([...changed]);
+    if (complete) this.auditLogger.record({ actorId: null, action: 'GROUP_COMPLETED', targetId: groupId, eventId });
   }
 
   /** Standings per group of an event (round robin: one group). */

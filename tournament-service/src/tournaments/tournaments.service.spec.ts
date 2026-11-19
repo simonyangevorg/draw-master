@@ -1668,6 +1668,75 @@ describe('TournamentsService', () => {
     });
   });
 
+  describe('groups feed the knockout (F-09)', () => {
+    const RULES = { bestOf: 1, gamesPerSet: 6, tiebreakAt: 6, decidingSet: 'FULL', noAd: false };
+    const WIN = [{ p1: 6, p2: 1 }];
+    const ids = ['a1', 'a2', 'a3', 'b1', 'b2', 'b3'];
+    const entries = ids.map((id) => makeParticipant({ id, playerId: `P-${id}`, eventId: 'event-1' } as any));
+    let matches: any[];
+    const t = () => makeTournament({
+      status: 'IN_PROGRESS', participants: entries,
+      groups: [
+        { id: 'gA', eventId: 'event-1', name: 'Group A', position: 0, participantIds: ['a1', 'a2', 'a3'] },
+        { id: 'gB', eventId: 'event-1', name: 'Group B', position: 1, participantIds: ['b1', 'b2', 'b3'] },
+      ],
+      events: [{ id: 'event-1', drawFormat: 'GROUP_STAGE_KNOCKOUT', status: 'IN_PROGRESS', groupRules: RULES, knockoutRules: RULES, finalRules: null }],
+    } as any);
+    const gm = (id: string, g: string, p1: string, p2: string, done = true) => ({
+      id, eventId: 'event-1', stage: 'GROUP', groupId: g, participant1Id: p1, participant2Id: p2,
+      status: done ? 'COMPLETED' : 'SCHEDULED', winnerId: done ? p1 : null, outcome: done ? 'COMPLETED' : null, sets: done ? WIN : [],
+    });
+    beforeEach(() => {
+      // 6 players, 2 groups of 3, 2 advance: a 4-slot knockout, A1 v B2 and B1 v A2.
+      matches = [
+        gm('ga1', 'gA', 'a1', 'a2'), gm('ga2', 'gA', 'a1', 'a3'), gm('ga3', 'gA', 'a2', 'a3', false),
+        gm('gb1', 'gB', 'b1', 'b2', false), gm('gb2', 'gB', 'b1', 'b3', false), gm('gb3', 'gB', 'b2', 'b3', false),
+        { id: 'sf1', eventId: 'event-1', stage: 'KNOCKOUT', round: 1, position: 0, slot1: 'A1', slot2: 'B2', nextMatchId: 'f', nextSlot: 1, status: 'SCHEDULED' },
+        { id: 'sf2', eventId: 'event-1', stage: 'KNOCKOUT', round: 1, position: 1, slot1: 'B1', slot2: 'A2', nextMatchId: 'f', nextSlot: 2, status: 'SCHEDULED' },
+        { id: 'f', eventId: 'event-1', stage: 'KNOCKOUT', round: 2, position: 0, nextMatchId: null, status: 'SCHEDULED' },
+      ];
+      mockMatchesRepo.findOne.mockImplementation(async ({ where }) => matches.find((m) => m.id === where.id) ?? null);
+      mockMatchesRepo.find.mockImplementation(async () => matches);
+      mockMatchesRepo.save.mockImplementation(async (x) => x);
+    });
+    const score = async (id: string) => {
+      mockTournamentsRepo.findOne.mockResolvedValue(t());
+      const m = matches.find((x) => x.id === id);
+      await service.updateMatch('tournament-1', id, { winnerId: m.participant1Id, sets: WIN }, actor('organiser-1'));
+    };
+    const ko = (id: string) => matches.find((m) => m.id === id);
+
+    it("finishing group A fills A1 and A2, and leaves group B's slots empty", async () => {
+      await score('ga3'); // a2 beats a3: a1 2-0, a2 1-1, a3 0-2
+      expect(ko('sf1').participant1Id).toBe('a1');
+      expect(ko('sf2').participant2Id).toBe('a2');
+      expect(ko('sf1').participant2Id ?? null).toBeNull();
+      expect(ko('sf2').participant1Id ?? null).toBeNull();
+    });
+
+    it('an unfinished group fills nothing', async () => {
+      await score('gb1');
+      expect(ko('sf1').participant2Id ?? null).toBeNull();
+      expect(ko('sf2').participant1Id ?? null).toBeNull();
+    });
+
+    it('once the knockout has started, group corrections no longer move anyone', async () => {
+      await score('ga3');
+      ko('sf1').status = 'COMPLETED';
+      ko('sf1').winnerId = 'a1';
+      matches.find((m) => m.id === 'ga3').winnerId = 'a3'; // pretend a different result landed
+      await score('ga2');
+      expect(ko('sf2').participant2Id).toBe('a2');
+    });
+
+    it("a qualifier facing a bye goes straight to the next round", async () => {
+      ko('sf2').slot1 = 'BYE';
+      await score('ga3');
+      expect(ko('sf2')).toMatchObject({ status: 'BYE', winnerId: 'a2' });
+      expect(ko('f').participant2Id).toBe('a2');
+    });
+  });
+
   // ── UPDATE MATCH ───────────────────────────────────────────────────────────
 
   describe('updateMatch', () => {

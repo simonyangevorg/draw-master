@@ -211,7 +211,7 @@ function GroupPool({ group, matches, pMap, advancePerGroup, isOrganiser, onScore
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
-export default function GroupStageView({ tournament, draw, participants, isOrganiser, onScore, standings = [], roundRobin = false }) {
+export default function GroupStageView({ tournament, draw, participants, isOrganiser, onScore, standings = [], roundRobin = false, renderKnockout }) {
   const pMap          = Object.fromEntries(participants.map(p => [p.id, p]));
   const groups        = (tournament.groups ?? []).slice().sort((a, b) => a.position - b.position);
   const advancePerGroup = tournament.advancePerGroup ?? 2;
@@ -241,13 +241,25 @@ export default function GroupStageView({ tournament, draw, participants, isOrgan
         <div className="gs-knockout-section">
           <div className="gs-knockout-header">
             <h3 className="gs-section-title">Knockout Phase</h3>
-            {knockoutMatches.every(m => !m.participant1Id && !m.participant2Id) && (
-              <span className="gs-knockout-badge">
-                Winners advance automatically after group stage completes
-              </span>
-            )}
           </div>
-          <BracketView draw={knockoutMatches} participants={participants} />
+          {/* Where each group stands (F-09): its qualifiers fill the slots when it finishes. */}
+          <ul className="gs-group-status">
+            {groups.map(group => {
+              const ms = groupMatches.filter(m => m.groupId === group.id);
+              const played = ms.filter(m => m.status === "COMPLETED" || m.status === "WALKOVER").length;
+              const letter = (group.name ?? "").replace("Group ", "");
+              const rows = standings.find(s => s.groupId === group.id)?.rows ?? [];
+              const name = pid => { const p = pMap[pid]; return p?.seed ? `Seed ${p.seed}` : pid ? pid.slice(0, 6) + "…" : "?"; };
+              return (
+                <li key={group.id}>
+                  {played === ms.length && ms.length > 0
+                    ? <><strong>{group.name} complete</strong>: {rows.slice(0, advancePerGroup).map((r, i) => `${letter}${i + 1}: ${name(r.participantId)}`).join(", ")}</>
+                    : <>{group.name}: {played} of {ms.length} matches played</>}
+                </li>
+              );
+            })}
+          </ul>
+          {renderKnockout ? renderKnockout(knockoutMatches) : <BracketView draw={knockoutMatches} participants={participants} />}
         </div>
       )}
     </div>

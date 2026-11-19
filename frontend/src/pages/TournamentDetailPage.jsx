@@ -352,6 +352,24 @@ export default function TournamentDetailPage() {
               <GroupStageView
                 roundRobin={event.drawFormat === "ROUND_ROBIN"}
                 standings={standings[event.id] ?? []}
+                renderKnockout={koMatches => (
+                  // The knockout of groups + knockout: the same editable bracket as a
+                  // single elimination, unlocked until its first match is played (F-09).
+                  <DrawManager
+                    draw={koMatches}
+                    participants={participants}
+                    pool={[]}
+                    hidePool
+                    isOrganiser={isOrganiser}
+                    drawLocked={koMatches.some(m => m.status === "COMPLETED" || m.status === "WALKOVER")}
+                    tournamentId={id}
+                    setsToWin={2}
+                    onSwap={swapInDraw}
+                    onScore={scoreMatch}
+                    onReload={loadTournament}
+                    flash={flash}
+                  />
+                )}
                 tournament={{ ...tournament, ...event, groups: (tournament.groups ?? []).filter(g => g.eventId === event.id) }}
                 draw={draw}
                 participants={participants}
@@ -460,7 +478,7 @@ function ParticipantsPanel({ participants, isOrganiser, currentUserId, tournamen
 }
 
 // ── Draw manager (bracket + drag/drop + pool) ─────────────────────────────────
-function DrawManager({ draw, participants, pool, isOrganiser, drawLocked, tournamentId, setsToWin, onSwap, onScore, onReload, flash }) {
+function DrawManager({ draw, participants, pool, hidePool, isOrganiser, drawLocked, tournamentId, setsToWin, onSwap, onScore, onReload, flash }) {
   const pMap = Object.fromEntries(participants.map(p => [p.id, p]));
   const dragSource = useRef(null);
   const [poolOver, setPoolOver]     = useState(false);
@@ -557,7 +575,7 @@ function DrawManager({ draw, participants, pool, isOrganiser, drawLocked, tourna
         <div className="draw-locked-note">The draw is locked now that results are in. Players can no longer be moved.</div>
       )}
       {/* Pool sidebar — shown to the organiser until the first result locks the draw */}
-      {isOrganiser && !drawLocked && (
+      {isOrganiser && !drawLocked && !hidePool && (
         <div
           className={`draw-pool${poolOver ? " draw-pool-over" : ""}`}
           onDragOver={e => { e.preventDefault(); setPoolOver(true); }}
