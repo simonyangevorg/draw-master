@@ -61,7 +61,7 @@ export class TournamentsService {
    * Each row says what the caller may do with it (`access`).
    */
   async findAll(actor?: Actor | null, status?: string) {
-    const all = await this.tournamentsRepo.find({ order: { createdAt: 'DESC' } });
+    const all = await this.tournamentsRepo.find({ order: { createdAt: 'DESC' }, relations: ['events'] });
     const wanted = status
       ? new Set(status.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean))
       : null;

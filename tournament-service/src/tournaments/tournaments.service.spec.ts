@@ -187,7 +187,7 @@ describe('TournamentsService', () => {
 
     it('asks for newest first', async () => {
       await service.findAll();
-      expect(mockTournamentsRepo.find).toHaveBeenCalledWith({ order: { createdAt: 'DESC' } });
+      expect(mockTournamentsRepo.find).toHaveBeenCalledWith({ order: { createdAt: 'DESC' }, relations: ['events'] });
     });
 
     it('anonymous: no drafts, no private, no finished or cancelled', async () => {
