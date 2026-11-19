@@ -110,6 +110,9 @@ export default function TournamentDetailPage() {
   }
 
   async function scoreMatch(matchId, sets, winnerId, outcome = "COMPLETED") {
+    // Clear the last message first, so "Score saved" only shows once the page has
+    // reloaded, not while the previous one lingers during the reload.
+    setMsg({ text: "", error: false });
     const res = await apiPatch(`/api/tournaments/${id}/matches/${matchId}`, { sets, winnerId, outcome });
     if (res.ok) { await loadTournament(); flash("Score saved — winner advanced."); }
     else { flash(await errorMessage(res, "Failed to save score"), true); }
