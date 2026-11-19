@@ -38,6 +38,8 @@ test('organiser approves one participant and rejects another', async ({ browser 
   });
   await approvePage.goto(tournamentUrl);
   await approvePage.getByRole('button', { name: 'Apply to Tournament' }).click();
+  // Wait until the application is saved before the organiser looks.
+  await expect(approvePage.getByText('Application submitted successfully!')).toBeVisible();
   const approveId = await getUserId(approvePage);
 
   const rejectCtx = await browser.newContext();
@@ -49,6 +51,8 @@ test('organiser approves one participant and rejects another', async ({ browser 
   });
   await rejectPage.goto(tournamentUrl);
   await rejectPage.getByRole('button', { name: 'Apply to Tournament' }).click();
+  // Wait until the application is saved before the organiser looks.
+  await expect(rejectPage.getByText('Application submitted successfully!')).toBeVisible();
   const rejectId = await getUserId(rejectPage);
 
   await organiserPage.goto(tournamentUrl);
