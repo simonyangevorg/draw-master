@@ -5,7 +5,7 @@ import Logo from "./Logo";
 import { ROLE_LABEL, label } from "../constants";
 
 export default function Sidebar() {
-  const { user, logout, isSuperAdmin, canCreateTournaments } = useAuth();
+  const { user, logout, isSuperAdmin, canCreateTournaments, adminClubs } = useAuth();
   const navigate = useNavigate();
 
   const linkClass = ({ isActive }) =>
@@ -26,6 +26,11 @@ export default function Sidebar() {
         {canCreateTournaments && (
           <NavLink to="/tournaments/new" className={linkClass}>
             <span>➕</span> New Tournament
+          </NavLink>
+        )}
+        {adminClubs.length > 0 && (
+          <NavLink to="/club-presets" className={linkClass}>
+            <span>📏</span> Match rules
           </NavLink>
         )}
         <NavLink to="/clubs" className={linkClass}>

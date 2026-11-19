@@ -3,7 +3,8 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { apiGet, apiPost, errorMessage } from "../api";
 import Sidebar from "../components/Sidebar";
-import { FORMAT_LABEL, SURFACE_LABEL, CATEGORY_LABEL, UNAVAILABLE_FORMATS, label } from "../constants";
+import RulesPicker from "../components/RulesPicker";
+import { FORMAT_LABEL, SURFACE_LABEL, CATEGORY_LABEL, UNAVAILABLE_FORMATS, DEFAULT_RULES, rulesSummary, stagesOf, label } from "../constants";
 
 const STEPS = ["Basic Info", "Events", "Match Rules", "Settings"];
 
@@ -21,6 +22,7 @@ const CATEGORY_NAME = { MEN: "Men's Singles", WOMEN: "Women's Singles", OPEN: "O
 const newEvent = (category = "MEN") => ({
   name: CATEGORY_NAME[category], category, drawFormat: "SINGLE_ELIMINATION",
   maxParticipants: 16, minParticipants: 4, numberOfGroups: 4, advancePerGroup: 2,
+  groupRules: { ...DEFAULT_RULES }, knockoutRules: { ...DEFAULT_RULES }, finalRules: null,
 });
 
 const INITIAL = {
@@ -31,8 +33,7 @@ const INITIAL = {
   events: [newEvent("MEN")],
   surface: "HARD_OUTDOOR", ageGroup: "OPEN",
   // Step 3
-  setsToWin: 2, gamesPerSet: 6, tiebreakAt: 6,
-  finalSetTiebreak: false, noAd: false, seeded: true,
+  seeded: true,
   // Step 4
   // PUBLIC for now: until players can join clubs (L-05) a CLUB tournament
   // would have nobody able to enter it. The organiser can still pick CLUB.
@@ -55,6 +56,15 @@ export default function CreateTournamentPage() {
       .then(all => setClubs((Array.isArray(all) ? all : []).filter(c => c.status === "ACTIVE")))
       .catch(() => {});
   }, [isSuperAdmin]);
+
+  // Rule presets (F-05): the built-ins plus the chosen club's own.
+  const [presets, setPresets] = useState([]);
+  useEffect(() => {
+    apiGet(`/api/tournaments/rule-presets${form.clubId ? `?clubId=${form.clubId}` : ""}`)
+      .then(r => (r.ok ? r.json() : []))
+      .then(list => setPresets(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [form.clubId]);
 
   // One club: just use it.
   useEffect(() => {
@@ -146,14 +156,13 @@ export default function CreateTournamentPage() {
     setLoading(true);
     setError("");
     try {
-      const { events, setsToWin, gamesPerSet, tiebreakAt, finalSetTiebreak, noAd, seeded, ...rest } = form;
+      const { events, seeded, ...rest } = form;
       const payload = {
         ...rest,
         rankingPoints: form.rankingPoints ? Number(form.rankingPoints) : undefined,
         entryFee: form.entryFee ? Number(form.entryFee) : undefined,
         prizePool: form.prizePool ? Number(form.prizePool) : undefined,
         registrationDeadline: form.registrationDeadline || undefined,
-        // Match rules apply to every event until per-stage rules arrive (F-05).
         events: events.map(ev => ({
           name: ev.name.trim(),
           category: ev.category,
@@ -162,11 +171,9 @@ export default function CreateTournamentPage() {
           minParticipants: Number(ev.minParticipants),
           numberOfGroups: ev.drawFormat === "GROUP_STAGE_KNOCKOUT" ? Number(ev.numberOfGroups) : undefined,
           advancePerGroup: ev.drawFormat === "GROUP_STAGE_KNOCKOUT" ? Number(ev.advancePerGroup) : undefined,
-          setsToWin: Number(setsToWin),
-          gamesPerSet: Number(gamesPerSet),
-          tiebreakAt: Number(tiebreakAt),
-          finalSetTiebreak,
-          noAd,
+          groupRules: ev.groupRules,
+          knockoutRules: ev.knockoutRules,
+          finalRules: stagesOf(ev.drawFormat).includes("knockout") ? ev.finalRules : null,
           seeded,
         })),
       };
@@ -365,45 +372,58 @@ export default function CreateTournamentPage() {
               </div>
             )}
 
-            {/* ── Step 2: Match Rules ── */}
+            {/* ── Step 2: Match Rules (F-05) ── */}
             {step === 2 && (
               <div className="form-section">
                 <h2 className="form-section-title">Match Rules</h2>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Sets to Win</label>
-                    <select name="setsToWin" value={form.setsToWin} onChange={handleChange}>
-                      <option value={1}>Best of 1 set</option>
-                      <option value={2}>Best of 3 sets</option>
-                      <option value={3}>Best of 5 sets</option>
-                    </select>
+                <p className="form-hint" style={{ marginTop: 0, marginBottom: "1rem" }}>
+                  Pick a preset or set your own, per stage. Each event keeps its own copy: changing a preset later doesn't
+                  change this tournament. Rules lock once an event's draw is made.
+                </p>
+                {form.events.map((ev, i) => (
+                  <div key={i} className="stage-rules">
+                    <h3>{ev.name || `Event ${i + 1}`} <span className="form-hint" style={{ display: "inline" }}>({label(FORMAT_LABEL, ev.drawFormat)})</span></h3>
+                    {stagesOf(ev.drawFormat).includes("group") && (
+                      <RulesPicker
+                        label={ev.drawFormat === "ROUND_ROBIN" ? "Matches" : "Group matches"}
+                        name="groupPreset" value={ev.groupRules} presets={presets}
+                        onChange={r => setEvent(i, "groupRules", r)}
+                        clubId={form.clubId} canSavePreset={isSuperAdmin || adminClubs.some(c => c.id === form.clubId)}
+                        onPresetSaved={p => setPresets(list => [...list, p])}
+                      />
+                    )}
+                    {stagesOf(ev.drawFormat).includes("knockout") && (
+                      <>
+                        <RulesPicker
+                          label={ev.drawFormat === "GROUP_STAGE_KNOCKOUT" ? "Knockout matches" : "Matches"}
+                          name="knockoutPreset" value={ev.knockoutRules} presets={presets}
+                          onChange={r => setEvent(i, "knockoutRules", r)}
+                          clubId={form.clubId} canSavePreset={isSuperAdmin || adminClubs.some(c => c.id === form.clubId)}
+                          onPresetSaved={p => setPresets(list => [...list, p])}
+                        />
+                        <label className="toggle-label" style={{ marginBottom: ".75rem" }}>
+                          <input type="checkbox" name="finalOverride" checked={!!ev.finalRules}
+                            onChange={e => setEvent(i, "finalRules", e.target.checked ? { ...ev.knockoutRules } : null)} />
+                          <span>Different rules for the final</span>
+                        </label>
+                        {ev.finalRules && (
+                          <RulesPicker
+                            label="Final" name="finalPreset" value={ev.finalRules} presets={presets}
+                            onChange={r => setEvent(i, "finalRules", r)}
+                            clubId={form.clubId} canSavePreset={isSuperAdmin || adminClubs.some(c => c.id === form.clubId)}
+                            onPresetSaved={p => setPresets(list => [...list, p])}
+                          />
+                        )}
+                      </>
+                    )}
                   </div>
-                  <div className="form-group">
-                    <label>Games per Set</label>
-                    <select name="gamesPerSet" value={form.gamesPerSet} onChange={handleChange}>
-                      <option value={4}>4 games</option>
-                      <option value={6}>6 games</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>Tiebreak at</label>
-                    <input name="tiebreakAt" type="number" min={4} max={8} value={form.tiebreakAt} onChange={handleChange} />
-                  </div>
-                </div>
+                ))}
                 <div className="form-group">
                   <label>Seeding</label>
                   <div className="toggle-group">
                     <label className="toggle-label">
                       <input type="checkbox" name="seeded" checked={form.seeded} onChange={handleChange} />
                       <span>Use player rankings to seed the draw</span>
-                    </label>
-                    <label className="toggle-label">
-                      <input type="checkbox" name="finalSetTiebreak" checked={form.finalSetTiebreak} onChange={handleChange} />
-                      <span>Final set tiebreak (champion tiebreak) instead of full set</span>
-                    </label>
-                    <label className="toggle-label">
-                      <input type="checkbox" name="noAd" checked={form.noAd} onChange={handleChange} />
-                      <span>No-advantage scoring</span>
                     </label>
                   </div>
                 </div>
@@ -454,8 +474,7 @@ export default function CreateTournamentPage() {
                     <span>Dates</span><span>{form.startDate} → {form.endDate}</span>
                     <span>Events</span><span>{form.events.map(ev => `${ev.name} (${label(FORMAT_LABEL, ev.drawFormat)}, up to ${ev.maxParticipants})`).join("; ")}</span>
                     <span>Surface</span><span>{label(SURFACE_LABEL, form.surface)}</span>
-                    <span>Sets to Win</span><span>{form.setsToWin === 1 ? "Best of 1" : form.setsToWin === 2 ? "Best of 3" : "Best of 5"}</span>
-                    <span>Games/Set</span><span>{form.gamesPerSet}</span>
+                    <span>Rules</span><span>{form.events.map(ev => `${ev.name}: ${rulesSummary(stagesOf(ev.drawFormat).includes("knockout") ? ev.knockoutRules : ev.groupRules)}`).join("; ")}</span>
                   </div>
                 </div>
               </div>

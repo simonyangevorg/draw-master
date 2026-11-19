@@ -14,6 +14,7 @@ import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ClubsPage from "./pages/ClubsPage";
 import AdminClubsPage from "./pages/AdminClubsPage";
 import AdminClubPage from "./pages/AdminClubPage";
+import ClubPresetsPage from "./pages/ClubPresetsPage";
 import "./index.css";
 
 function PrivateRoute({ children }) {
@@ -47,6 +48,7 @@ function AppRoutes() {
       <Route path="/profile" element={<PrivateRoute><ProfilePage /></PrivateRoute>} />
       <Route path="/change-password" element={<PrivateRoute><ChangePasswordPage /></PrivateRoute>} />
       <Route path="/clubs" element={<PrivateRoute><ClubsPage /></PrivateRoute>} />
+      <Route path="/club-presets" element={<PrivateRoute><ClubPresetsPage /></PrivateRoute>} />
       <Route path="/admin/clubs" element={<SuperAdminRoute><AdminClubsPage /></SuperAdminRoute>} />
       <Route path="/admin/clubs/:id" element={<SuperAdminRoute><AdminClubPage /></SuperAdminRoute>} />
       <Route path="*" element={<NotFoundPage />} />

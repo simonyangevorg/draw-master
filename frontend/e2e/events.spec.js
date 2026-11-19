@@ -21,7 +21,7 @@ test('a two-event tournament runs both events', async ({ browser }) => {
   await org.locator('select[name="drawFormat"]').nth(1).selectOption('ROUND_ROBIN');
   await org.locator('input[name="minParticipants"]').nth(1).fill('2');
   await org.getByRole('button', { name: /Continue/ }).click();
-  await org.locator('select[name="setsToWin"]').selectOption('1');
+  await org.locator('select[name="knockoutPreset"]').first().selectOption({ label: '1 set to 6' });
   await org.getByRole('button', { name: /Continue/ }).click();
   await org.getByRole('button', { name: /Create Tournament/ }).click();
   await org.waitForURL(/\/tournaments\/[0-9a-f-]+$/);

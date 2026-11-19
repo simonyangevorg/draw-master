@@ -14,7 +14,7 @@ async function createTournament(page, overrides = {}) {
   await page.locator('input[name="minParticipants"]').fill('2');
   await page.getByRole('button', { name: /Continue/ }).click();
 
-  await page.locator('select[name="setsToWin"]').selectOption('1'); // Best of 1 — one set decides the match
+  await page.locator('select[name="knockoutPreset"]').selectOption({ label: '1 set to 6' }); // one set decides the match
   await page.getByRole('button', { name: /Continue/ }).click();
 
   if (overrides.requiresApproval) {

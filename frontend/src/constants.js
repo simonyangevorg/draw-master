@@ -94,3 +94,31 @@ export const STATUS_LABEL = {
 
 /** A tournament's events as one line: "Men's Singles, Women's Singles". */
 export const eventNames = (t) => (t?.events ?? []).slice().sort((a, b) => a.position - b.position).map(e => e.name).join(", ");
+
+// ── Match rules (F-05) ──
+
+/** The rules used until the API's presets have loaded. */
+export const DEFAULT_RULES = { bestOf: 3, gamesPerSet: 6, tiebreakAt: 6, decidingSet: "FULL", noAd: false };
+
+export const sameRules = (a, b) =>
+  !!a && !!b && ["bestOf", "gamesPerSet", "tiebreakAt", "decidingSet", "noAd"].every(k => a[k] === b[k]);
+
+/** "Best of 3 · sets to 6 · tiebreak at 6-6 · match tiebreak to 10 · no-ad" */
+export function rulesSummary(r) {
+  if (!r) return "—";
+  const parts = [
+    r.bestOf === 1 ? "One set" : `Best of ${r.bestOf}`,
+    r.gamesPerSet === 8 ? "pro set to 8" : `sets to ${r.gamesPerSet}`,
+    `tiebreak at ${r.tiebreakAt}-${r.tiebreakAt}`,
+  ];
+  if (r.bestOf > 1 && r.decidingSet === "MATCH_TIEBREAK_10") parts.push("match tiebreak to 10 instead of a deciding set");
+  if (r.noAd) parts.push("no-ad");
+  return parts.join(" · ");
+}
+
+/** Sets needed to win under these rules. */
+export const setsToWinOf = (r) => Math.ceil((r?.bestOf ?? 3) / 2);
+
+/** Which stages an event's format has, for its rules (F-05). */
+export const stagesOf = (drawFormat) =>
+  drawFormat === "ROUND_ROBIN" ? ["group"] : drawFormat === "GROUP_STAGE_KNOCKOUT" ? ["group", "knockout"] : ["knockout"];

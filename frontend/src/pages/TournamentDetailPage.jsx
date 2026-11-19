@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
 import BracketView from "../components/BracketView";
 import GroupStageView from "../components/GroupStageView";
 import Sidebar from "../components/Sidebar";
-import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, VISIBILITY_LABEL, CATEGORY_LABEL, STATUS_LABEL, label } from "../constants";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, VISIBILITY_LABEL, CATEGORY_LABEL, STATUS_LABEL, rulesSummary, setsToWinOf, stagesOf, label } from "../constants";
 
 export default function TournamentDetailPage() {
   const { id } = useParams();
@@ -281,11 +281,14 @@ export default function TournamentDetailPage() {
                 <dt>Category</dt><dd>{label(CATEGORY_LABEL, event.category)}</dd>
                 <dt>Format</dt><dd>{label(FORMAT_LABEL, event.drawFormat)}</dd>
                 <dt>Entries</dt><dd>{entryCount}</dd>
-                <dt>Sets to Win</dt><dd>{event.setsToWin === 1 ? "Best of 1" : event.setsToWin === 2 ? "Best of 3" : "Best of 5"}</dd>
-                <dt>Games per Set</dt><dd>{event.gamesPerSet}</dd>
-                <dt>Tiebreak at</dt><dd>{event.tiebreakAt}-{event.tiebreakAt}</dd>
-                <dt>Final Set</dt><dd>{event.finalSetTiebreak ? "Champion Tiebreak" : "Full Set"}</dd>
-                <dt>No-Ad Scoring</dt><dd>{event.noAd ? "Yes" : "No"}</dd>
+                {/* Match rules per stage (F-05) */}
+                {stagesOf(event.drawFormat).includes("group") && (
+                  <><dt>{event.drawFormat === "ROUND_ROBIN" ? "Rules" : "Group rules"}</dt><dd>{rulesSummary(event.groupRules)}</dd></>
+                )}
+                {stagesOf(event.drawFormat).includes("knockout") && (
+                  <><dt>{event.drawFormat === "GROUP_STAGE_KNOCKOUT" ? "Knockout rules" : "Rules"}</dt><dd>{rulesSummary(event.knockoutRules)}</dd></>
+                )}
+                {event.finalRules && <><dt>Final</dt><dd>{rulesSummary(event.finalRules)}</dd></>}
                 <dt>Seeded</dt><dd>{event.seeded ? "Yes" : "No"}</dd>
               </dl>
             </div>
@@ -342,7 +345,7 @@ export default function TournamentDetailPage() {
                 isOrganiser={isOrganiser}
                 drawLocked={drawLocked}
                 tournamentId={id}
-                setsToWin={event.setsToWin ?? 2}
+                setsToWin={2}
                 onSwap={swapInDraw}
                 onScore={scoreMatch}
                 onReload={loadTournament}
@@ -806,7 +809,9 @@ function DraggableBracket({ draw, pMap, isOrganiser, drawLocked, dragSource, onD
 }
 
 // ── Score modal ───────────────────────────────────────────────────────────────
-function ScoreModal({ match, pMap, setsToWin, playerLabel, onSave, onClose }) {
+function ScoreModal({ match, pMap, setsToWin: fallbackSetsToWin, playerLabel, onSave, onClose }) {
+  // Each match carries the rules it is played under (F-05).
+  const setsToWin = match.rules ? setsToWinOf(match.rules) : fallbackSetsToWin;
   const maxSets   = setsToWin * 2 - 1; // best-of-3 → max 3 sets, best-of-5 → max 5
   const initSets  = Array.from({ length: setsToWin }, () => ({ p1: "", p2: "" }));
   const [sets, setSets]       = useState(initSets);

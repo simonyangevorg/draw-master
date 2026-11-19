@@ -2,7 +2,9 @@ import React, { useState } from "react";
 import BracketView from "./BracketView";
 
 // ── Score modal (self-contained, reuses shared modal/score-* CSS) ─────────────
-function ScoreModal({ match, pMap, setsToWin, onSave, onClose }) {
+function ScoreModal({ match, pMap, setsToWin: fallbackSetsToWin, onSave, onClose }) {
+  // Each match carries the rules it is played under (F-05).
+  const setsToWin = match.rules ? Math.ceil(match.rules.bestOf / 2) : fallbackSetsToWin;
   const maxSets = setsToWin * 2 - 1;
   const [sets, setSets] = useState(Array.from({ length: setsToWin }, () => ({ p1: "", p2: "" })));
   const [winnerId, setWinner] = useState("");
@@ -276,7 +278,7 @@ export default function GroupStageView({ tournament, draw, participants, isOrgan
   const pMap          = Object.fromEntries(participants.map(p => [p.id, p]));
   const groups        = (tournament.groups ?? []).slice().sort((a, b) => a.position - b.position);
   const advancePerGroup = tournament.advancePerGroup ?? 2;
-  const setsToWin     = tournament.setsToWin ?? 2;
+  const setsToWin     = 2; // fallback only: each match carries its own rules (F-05)
 
   const groupMatches    = draw.filter(m => m.stage === "GROUP");
   const knockoutMatches = draw.filter(m => m.stage === "KNOCKOUT");
