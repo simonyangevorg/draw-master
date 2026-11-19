@@ -47,3 +47,6 @@ export const REGISTER_THROTTLE_LIMIT = positiveInt(process.env.REGISTER_THROTTLE
 
 /** Token refreshes allowed per client per minute (default 30): a busy tab refreshes once an hour. */
 export const REFRESH_THROTTLE_LIMIT = positiveInt(process.env.REFRESH_THROTTLE_LIMIT, 30);
+
+/** Access tokens are short-lived; the frontend refreshes them (L-17). */
+export const ACCESS_TOKEN_TTL = '15m';

@@ -1,4 +1,5 @@
 import { validate } from 'class-validator';
+import { ValidationPipe } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { RegisterDto } from './register.dto';
 
@@ -12,26 +13,19 @@ function makeDto(overrides: Record<string, unknown> = {}) {
 }
 
 describe('RegisterDto', () => {
-  it('accepts MEMBER and GUEST roles', async () => {
-    for (const role of ['MEMBER', 'GUEST']) {
-      const errors = await validate(makeDto({ role }));
-      expect(errors).toHaveLength(0);
-    }
+  it('accepts a normal sign-up', async () => {
+    expect(await validate(makeDto())).toHaveLength(0);
   });
 
-  it('accepts an omitted role', async () => {
-    const errors = await validate(makeDto());
-    expect(errors).toHaveLength(0);
-  });
-
-  it('rejects ORGANISER at registration', async () => {
-    const errors = await validate(makeDto({ role: 'ORGANISER' }));
-    expect(errors.some((e) => e.property === 'role')).toBe(true);
-  });
-
-  it('rejects an unknown role', async () => {
-    const errors = await validate(makeDto({ role: 'ADMIN' }));
-    expect(errors.some((e) => e.property === 'role')).toBe(true);
+  // L-02: nobody picks a role or club at sign-up; an old client still sending them gets them stripped.
+  it('drops role and clubId sent by an old client', async () => {
+    const pipe = new ValidationPipe({ whitelist: true });
+    const out = await pipe.transform(
+      { email: 'a@b.com', name: 'Al', password: 'password123', role: 'SUPER_ADMIN', clubId: 'x' },
+      { type: 'body', metatype: RegisterDto },
+    );
+    expect(out).not.toHaveProperty('role');
+    expect(out).not.toHaveProperty('clubId');
   });
 });
 

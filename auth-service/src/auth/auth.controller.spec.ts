@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ForbiddenException } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
+import { SuperAdminGuard } from './super-admin.guard';
 import { AuthService } from './auth.service';
 
 function makeRes() {
@@ -108,22 +109,37 @@ describe('AuthController', () => {
     });
   });
 
-  describe('updateRole', () => {
-    it('throws ForbiddenException when the caller is not an ORGANISER', () => {
-      const req = { user: { role: 'MEMBER' } } as any;
+  describe('updateRole (L-02: super-admin only)', () => {
+    const ctx = (role: string) => ({ switchToHttp: () => ({ getRequest: () => ({ user: { role } }) }) }) as any;
 
-      expect(() => controller.updateRole(req, 'target-id', { role: 'ORGANISER' }))
-        .toThrow(ForbiddenException);
-      expect(mockAuthService.updateRole).not.toHaveBeenCalled();
+    it.each(['PLAYER', 'ORGANISER', undefined])('the guard refuses a %s caller', (role) => {
+      expect(() => new SuperAdminGuard().canActivate(ctx(role as any))).toThrow(ForbiddenException);
     });
 
-    it('delegates to authService when the caller is an ORGANISER', () => {
-      const req = { user: { role: 'ORGANISER', sub: 'organiser-1' } } as any;
-      mockAuthService.updateRole.mockResolvedValue({ id: 'target-id', role: 'ORGANISER' });
+    it('the guard lets the super-admin through, and the controller delegates', () => {
+      expect(new SuperAdminGuard().canActivate(ctx('SUPER_ADMIN'))).toBe(true);
+      const req = { user: { role: 'SUPER_ADMIN', sub: 'boss' } } as any;
+      mockAuthService.updateRole.mockResolvedValue({ id: 'target-id', role: 'SUPER_ADMIN' });
+      controller.updateRole(req, 'target-id', { role: 'SUPER_ADMIN' });
+      expect(mockAuthService.updateRole).toHaveBeenCalledWith('target-id', { role: 'SUPER_ADMIN' }, 'boss');
+    });
+  });
 
-      controller.updateRole(req, 'target-id', { role: 'ORGANISER' });
+  describe('validate: club claims (L-02)', () => {
+    it('forwards the clubs claim as X-User-Clubs (id:A,id:M)', () => {
+      mockJwtService.verify.mockReturnValue({
+        sub: 'user-1', role: 'PLAYER', clubs: [{ id: 'c1', role: 'ADMIN' }, { id: 'c2', role: 'MEMBER' }],
+      });
+      const res = makeRes();
+      controller.validate({ headers: { authorization: 'Bearer t' } } as any, res);
+      expect(res.setHeader).toHaveBeenCalledWith('X-User-Clubs', 'c1:A,c2:M');
+    });
 
-      expect(mockAuthService.updateRole).toHaveBeenCalledWith('target-id', { role: 'ORGANISER' }, 'organiser-1');
+    it('sends an empty X-User-Clubs for a token without clubs, so nothing stale leaks through', () => {
+      mockJwtService.verify.mockReturnValue({ sub: 'user-1', role: 'PLAYER' });
+      const res = makeRes();
+      controller.validate({ headers: { authorization: 'Bearer t' } } as any, res);
+      expect(res.setHeader).toHaveBeenCalledWith('X-User-Clubs', '');
     });
   });
 });

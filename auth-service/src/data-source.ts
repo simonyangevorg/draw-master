@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { UserEntity } from './auth/entities/user.entity';
+import { ClubEntity } from './auth/entities/club.entity';
+import { ClubMembershipEntity } from './auth/entities/club-membership.entity';
 import { MIGRATIONS } from './migrations';
 
 /**
@@ -12,7 +14,7 @@ import { MIGRATIONS } from './migrations';
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
   url: process.env.DATABASE_URL,
-  entities: [UserEntity],
+  entities: [UserEntity, ClubEntity, ClubMembershipEntity],
   migrations: MIGRATIONS,
   synchronize: false,
 };

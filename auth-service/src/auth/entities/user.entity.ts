@@ -2,7 +2,11 @@ import {
   Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index,
 } from 'typeorm';
 
-export type Role = 'ORGANISER' | 'MEMBER' | 'GUEST';
+/**
+ * Platform roles (L-02). Running a club is not a platform role: it is a
+ * club membership with role ADMIN (see ClubMembershipEntity).
+ */
+export type Role = 'SUPER_ADMIN' | 'PLAYER';
 
 // Case-insensitive uniqueness (B-12). An expression index TypeORM can't model,
 // so it lives in the EmailLowercase migration and is excluded from sync/diff.
@@ -21,11 +25,12 @@ export class UserEntity {
   @Column()
   passwordHash: string;
 
-  @Column({ type: 'varchar', default: 'GUEST' })
+  @Column({ type: 'varchar', default: 'PLAYER' })
   role: Role;
 
-  @Column({ nullable: true })
-  clubId: string;
+  /** Set for the bootstrapped super-admin: the first sign-in must pick a new password. */
+  @Column({ default: false })
+  mustChangePassword: boolean;
 
   @CreateDateColumn()
   createdAt: Date;

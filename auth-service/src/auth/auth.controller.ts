@@ -1,6 +1,5 @@
 import {
   Controller, Post, Patch, Get, Body, Param, ParseUUIDPipe, UseGuards, Req, Res, HttpCode,
-  ForbiddenException,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -9,6 +8,9 @@ import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtGuard } from './jwt.guard';
+import { SuperAdminGuard } from './super-admin.guard';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { encodeClubs, ClubClaim } from './interfaces/user.interface';
 import { LOGIN_THROTTLE_LIMIT, REGISTER_THROTTLE_LIMIT, REFRESH_THROTTLE_LIMIT } from '../env';
 import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
@@ -52,12 +54,19 @@ export class AuthController {
     return this.authService.getMe(req['user'].sub);
   }
 
+  // Guessing the current password is throttled like login.
+  @Post('password')
+  @HttpCode(200)
+  @UseGuards(JwtGuard, ThrottlerGuard)
+  @Throttle({ default: { ttl: 60000, limit: LOGIN_THROTTLE_LIMIT } })
+  changePassword(@Req() req: Request, @Body() dto: ChangePasswordDto) {
+    return this.authService.changePassword(req['user'].sub, dto);
+  }
+
+  // Platform roles are the super-admin's alone (L-02).
   @Patch('users/:id/role')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, SuperAdminGuard)
   updateRole(@Req() req: Request, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateRoleDto) {
-    if (req['user'].role !== 'ORGANISER') {
-      throw new ForbiddenException('Only an ORGANISER can change user roles');
-    }
     return this.authService.updateRole(id, dto, req['user'].sub);
   }
 
@@ -74,7 +83,7 @@ export class AuthController {
       return {};
     }
     try {
-      const payload = this.jwtService.verify<{ sub?: string; email?: string; name?: string; role?: string; type?: string }>(header.slice(7), { algorithms: ['HS256'] });
+      const payload = this.jwtService.verify<{ sub?: string; email?: string; name?: string; role?: string; type?: string; clubs?: ClubClaim[] }>(header.slice(7), { algorithms: ['HS256'] });
       // Only access tokens identify a caller. A refresh token (type: 'refresh',
       // no profile claims) must never be accepted in place of one.
       if (payload.type === 'refresh' || !payload.sub) {
@@ -85,6 +94,8 @@ export class AuthController {
       if (payload.email) res.setHeader('X-User-Email', payload.email);
       if (payload.name)  res.setHeader('X-User-Name',  payload.name);
       if (payload.role)  res.setHeader('X-User-Role',  payload.role);
+      // Club seats for tournament-service's access rules (L-06): "id:A,id:M".
+      res.setHeader('X-User-Clubs', encodeClubs(Array.isArray(payload.clubs) ? payload.clubs : []));
       return {};
     } catch {
       res.status(401);

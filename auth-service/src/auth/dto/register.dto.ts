@@ -1,6 +1,11 @@
-import { IsEmail, IsString, MinLength, MaxLength, IsIn, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
 import { NormalizeEmail, Trim } from './normalize';
 
+/**
+ * Everyone signs up as a player (L-02). There is no role or club to pick:
+ * clubs are joined afterwards, and admins are appointed by the super-admin.
+ * Unknown fields (an old client still sending role/clubId) are stripped.
+ */
 export class RegisterDto {
   @NormalizeEmail()
   @IsEmail()
@@ -17,12 +22,4 @@ export class RegisterDto {
   @MinLength(6)
   @MaxLength(128)
   password: string;
-
-  @IsOptional()
-  @IsIn(['MEMBER', 'GUEST'])
-  role?: 'MEMBER' | 'GUEST';
-
-  @IsOptional()
-  @IsString()
-  clubId?: string;
 }
