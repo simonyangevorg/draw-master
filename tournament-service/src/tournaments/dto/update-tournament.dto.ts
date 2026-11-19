@@ -1,7 +1,9 @@
 import {
   IsString, IsOptional, IsBoolean, IsInt, IsNumber,
-  IsIn, IsDateString, Min, Max,
+  IsIn, IsDateString, IsNotEmpty, MaxLength, Min, Max,
 } from 'class-validator';
+import { Trim, IsNotPastDate } from './validators';
+import { SUPPORTED_TYPES, SUPPORTED_FORMATS, SURFACES, AGE_GROUPS } from './create-tournament.dto';
 
 /** Fields that shape the draw; only changeable while the tournament is a DRAFT. */
 export const FORMAT_FIELDS = [
@@ -16,30 +18,46 @@ export const FORMAT_FIELDS = [
  * endpoints (open, draw, ...) and ownership is never transferable this way.
  * The controller validates with forbidNonWhitelisted, so sending any of those
  * fields is a 400 rather than being silently applied.
+ *
+ * Rules that compare two fields (end vs start, deadline vs start, min vs max)
+ * are checked in TournamentsService.update against the merged result, since a
+ * PATCH usually carries only one side.
  */
 export class UpdateTournamentDto {
   @IsOptional()
+  @Trim()
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
   name?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(2000)
   description?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(100)
   venue?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(100)
   city?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(100)
   country?: string;
 
   @IsOptional()
   @IsDateString()
+  @IsNotPastDate()
   startDate?: string;
 
   @IsOptional()
@@ -48,22 +66,23 @@ export class UpdateTournamentDto {
 
   @IsOptional()
   @IsDateString()
+  @IsNotPastDate()
   registrationDeadline?: string;
 
   @IsOptional()
-  @IsIn(['SINGLES_MEN', 'SINGLES_WOMEN', 'DOUBLES_MEN', 'DOUBLES_WOMEN', 'MIXED_DOUBLES'])
+  @IsIn(SUPPORTED_TYPES)
   tournamentType?: string;
 
   @IsOptional()
-  @IsIn(['SINGLE_ELIMINATION', 'DOUBLE_ELIMINATION', 'ROUND_ROBIN', 'GROUP_STAGE_KNOCKOUT'])
+  @IsIn(SUPPORTED_FORMATS)
   drawFormat?: string;
 
   @IsOptional()
-  @IsIn(['CLAY', 'HARD_OUTDOOR', 'HARD_INDOOR', 'GRASS', 'CARPET', 'ACRYLIC', 'ARTIFICIAL_CLAY', 'ARTIFICIAL_GRASS'])
+  @IsIn(SURFACES)
   surface?: string;
 
   @IsOptional()
-  @IsIn(['OPEN', 'U18', 'U16', 'U14', 'SENIOR_40'])
+  @IsIn(AGE_GROUPS)
   ageGroup?: string;
 
   @IsOptional()
@@ -74,6 +93,7 @@ export class UpdateTournamentDto {
   @IsOptional()
   @IsInt()
   @Min(2)
+  @Max(64)
   minParticipants?: number;
 
   @IsOptional()
@@ -115,6 +135,8 @@ export class UpdateTournamentDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(12)
   tiebreakAt?: number;
 
   @IsOptional()
@@ -134,5 +156,6 @@ export class UpdateTournamentDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(4)
   advancePerGroup?: number;
 }

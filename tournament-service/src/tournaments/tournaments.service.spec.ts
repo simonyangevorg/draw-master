@@ -9,6 +9,9 @@ import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
 import { AuditLogger } from '../audit/audit-logger.service';
 import { UpdateMatchDto } from './dto/update-match.dto';
+import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { UpdateTournamentDto } from './dto/update-tournament.dto';
+import { AssignSeedDto } from './dto/assign-seed.dto';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -123,15 +126,44 @@ describe('TournamentsService', () => {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  describe('findAll', () => {
-    it('returns tournaments ordered by createdAt DESC', async () => {
-      const list = [makeTournament()];
-      mockTournamentsRepo.find.mockResolvedValue(list);
+  describe('findAll (B-21 visibility)', () => {
+    const list = () => [
+      makeTournament({ id: 't-open', organiserId: 'someone', status: 'OPEN' }),
+      makeTournament({ id: 't-draft-other', organiserId: 'someone', status: 'DRAFT' }),
+      makeTournament({ id: 't-draft-mine', organiserId: 'me', status: 'DRAFT' }),
+      makeTournament({ id: 't-private', organiserId: 'someone', status: 'OPEN', isPublic: false }),
+      makeTournament({ id: 't-private-entered', organiserId: 'someone', status: 'OPEN', isPublic: false }),
+      makeTournament({ id: 't-done', organiserId: 'someone', status: 'COMPLETED' }),
+      makeTournament({ id: 't-done-entered', organiserId: 'someone', status: 'COMPLETED' }),
+      makeTournament({ id: 't-cancelled', organiserId: 'someone', status: 'CANCELLED' }),
+    ];
+    const ids = (r: TournamentEntity[]) => r.map((t) => t.id);
+    beforeEach(() => {
+      mockTournamentsRepo.find.mockResolvedValue(list());
+      mockParticipantsRepo.find.mockResolvedValue([
+        { tournamentId: 't-private-entered' }, { tournamentId: 't-done-entered' },
+      ]);
+    });
 
-      const result = await service.findAll();
-
+    it('asks for newest first', async () => {
+      await service.findAll();
       expect(mockTournamentsRepo.find).toHaveBeenCalledWith({ order: { createdAt: 'DESC' } });
-      expect(result).toBe(list);
+    });
+
+    it('anonymous: no drafts, no private, no finished or cancelled', async () => {
+      expect(ids(await service.findAll())).toEqual(['t-open']);
+    });
+
+    it("signed in: also my own drafts and everything I've entered", async () => {
+      expect(ids(await service.findAll('me'))).toEqual(['t-open', 't-draft-mine', 't-private-entered', 't-done-entered']);
+    });
+
+    it("never returns another organiser's DRAFT, even when asked by status", async () => {
+      expect(ids(await service.findAll('me', 'DRAFT'))).toEqual(['t-draft-mine']);
+    });
+
+    it('?status= brings back completed and cancelled tournaments', async () => {
+      expect(ids(await service.findAll(undefined, 'completed,CANCELLED'))).toEqual(['t-done', 't-done-entered', 't-cancelled']);
     });
   });
 
@@ -819,6 +851,7 @@ describe('TournamentsService', () => {
       );
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockMatchesRepo.findOne.mockResolvedValue(match);
+      mockMatchesRepo.find.mockResolvedValue([match]);
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       return match;
     };
@@ -855,6 +888,261 @@ describe('TournamentsService', () => {
       await expect(
         service.updateDrawSlot('tournament-1', 'missing', 'participant1Id', 'pA', 'organiser-1'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── Sprint 1: validation, state machine, draw config ───────────────────────
+
+  describe('DTO validation (B-14, B-17)', () => {
+    const tomorrow = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const later = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+    const base = () => ({
+      name: 'Spring Open', startDate: tomorrow(), endDate: later(3),
+      tournamentType: 'SINGLES_MEN', drawFormat: 'SINGLE_ELIMINATION', surface: 'CLAY',
+    });
+    const errorsFor = async (cls: any, body: any) => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      return (await validate(plainToInstance(cls, body))).map((e) => e.property);
+    };
+
+    it('accepts a sensible tournament and trims the name', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      expect(await errorsFor(CreateTournamentDto, base())).toEqual([]);
+      expect(plainToInstance(CreateTournamentDto, { ...base(), name: '  Spring Open  ' }).name).toBe('Spring Open');
+    });
+    it('rejects a whitespace-only name', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), name: '   ' })).toEqual(['name']);
+    });
+    it('rejects a 5000-character name', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), name: 'x'.repeat(5000) })).toEqual(['name']);
+    });
+    it('rejects an end date before the start date', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), startDate: later(5), endDate: later(2) })).toEqual(['endDate']);
+    });
+    it('rejects a start date in the past', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), startDate: '2020-01-01' })).toContain('startDate');
+    });
+    it('rejects a registration deadline after the start', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), registrationDeadline: later(2) })).toEqual(['registrationDeadline']);
+    });
+    it('rejects a minimum above the maximum (explicit or default 32)', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), maxParticipants: 8, minParticipants: 9 })).toEqual(['minParticipants']);
+      expect(await errorsFor(CreateTournamentDto, { ...base(), minParticipants: 40 })).toEqual(['minParticipants']);
+    });
+    it('rejects Double Elimination and doubles until they are implemented', async () => {
+      expect(await errorsFor(CreateTournamentDto, { ...base(), drawFormat: 'DOUBLE_ELIMINATION' })).toEqual(['drawFormat']);
+      expect(await errorsFor(CreateTournamentDto, { ...base(), tournamentType: 'MIXED_DOUBLES' })).toEqual(['tournamentType']);
+      expect(await errorsFor(UpdateTournamentDto, { drawFormat: 'DOUBLE_ELIMINATION' })).toEqual(['drawFormat']);
+    });
+    it('the seed DTO rejects text, zero and negatives but allows null to clear', async () => {
+      expect(await errorsFor(AssignSeedDto, { seed: 'abc' })).toEqual(['seed']);
+      expect(await errorsFor(AssignSeedDto, { seed: 0 })).toEqual(['seed']);
+      expect(await errorsFor(AssignSeedDto, { seed: -2 })).toEqual(['seed']);
+      expect(await errorsFor(AssignSeedDto, { seed: null })).toEqual([]);
+      expect(await errorsFor(AssignSeedDto, {})).toEqual(['seed']);
+    });
+  });
+
+  describe('update cross-field rules (B-14)', () => {
+    beforeEach(() => mockTournamentsRepo.save.mockImplementation(async (t) => t));
+    const t = () => makeTournament({ status: 'DRAFT', startDate: '2099-05-10', endDate: '2099-05-12', minParticipants: 4, maxParticipants: 8 } as any);
+
+    it('rejects an endDate before the stored startDate', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(t());
+      await expect(service.update('tournament-1', { endDate: '2099-05-01' }, 'organiser-1')).rejects.toThrow('endDate');
+    });
+    it('rejects a deadline after the stored startDate', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(t());
+      await expect(service.update('tournament-1', { registrationDeadline: '2099-05-11' }, 'organiser-1')).rejects.toThrow('registrationDeadline');
+    });
+    it('rejects a minimum above the stored maximum', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(t());
+      await expect(service.update('tournament-1', { minParticipants: 16 }, 'organiser-1')).rejects.toThrow('minParticipants');
+    });
+  });
+
+  describe('enroll deadline (B-14)', () => {
+    beforeEach(() => {
+      mockParticipantsRepo.count.mockResolvedValue(0);
+      mockParticipantsRepo.findOne.mockResolvedValue(null);
+      mockParticipantsRepo.create.mockImplementation((d) => d);
+      mockParticipantsRepo.save.mockImplementation(async (p) => p);
+    });
+
+    it('refuses a player entering after the deadline', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ registrationDeadline: '2020-01-01' } as any));
+      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, 'player-1')).rejects.toThrow('Registration closed');
+    });
+    it('still lets the organiser add a late entry', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ registrationDeadline: '2020-01-01' } as any));
+      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, 'organiser-1')).resolves.toBeTruthy();
+    });
+    it('accepts entries on the deadline day itself', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ registrationDeadline: today } as any));
+      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, 'player-1')).resolves.toBeTruthy();
+    });
+  });
+
+  describe('participant state machine and capacity (B-11)', () => {
+    beforeEach(() => {
+      mockParticipantsRepo.save.mockImplementation(async (p) => p);
+      mockParticipantsRepo.count.mockResolvedValue(0);
+    });
+
+    it.each(['APPROVED', 'REJECTED', 'WITHDRAWN'])('cannot approve an entry that is %s', async (status) => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: status as any }));
+      await expect(service.approveParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('Only a pending entry');
+    });
+
+    it.each(['APPROVED', 'REJECTED', 'WITHDRAWN'])('cannot reject an entry that is %s', async (status) => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: status as any }));
+      await expect(service.rejectParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('Only a pending entry');
+    });
+
+    it('refuses the 9th approval for 8 places', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 8 }));
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: 'PENDING' }));
+      mockParticipantsRepo.count.mockResolvedValue(8);
+      await expect(service.approveParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('full (8/8');
+      expect(mockParticipantsRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('approves the 8th entry for 8 places', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 8 }));
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: 'PENDING' }));
+      mockParticipantsRepo.count.mockResolvedValue(7);
+      expect((await service.approveParticipant('tournament-1', 'p', 'organiser-1')).status).toBe('APPROVED');
+    });
+
+    it('no approve or reject after the draw', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' }));
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: 'PENDING' }));
+      await expect(service.approveParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('locked');
+      await expect(service.rejectParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('locked');
+    });
+  });
+
+  describe('assignSeed rules (B-13)', () => {
+    beforeEach(() => mockParticipantsRepo.save.mockImplementation(async (p) => p));
+
+    it('rejects a seed above the entry maximum', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 8 }));
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA' }));
+      await expect(service.assignSeed('tournament-1', 'pA', 9, 'organiser-1')).rejects.toThrow('between 1 and 8');
+    });
+    it('rejects a seed another entry already holds', async () => {
+      const other = makeParticipant({ id: 'pB', seed: 2 });
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ participants: [other] }));
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA' }));
+      await expect(service.assignSeed('tournament-1', 'pA', 2, 'organiser-1')).rejects.toThrow('already taken');
+    });
+    it("ignores a withdrawn entry's old seed", async () => {
+      const other = makeParticipant({ id: 'pB', seed: 2, status: 'WITHDRAWN' });
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ participants: [other] }));
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA' }));
+      expect((await service.assignSeed('tournament-1', 'pA', 2, 'organiser-1')).seed).toBe(2);
+    });
+    it('is locked after the draw', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' }));
+      await expect(service.assignSeed('tournament-1', 'pA', 1, 'organiser-1')).rejects.toThrow('locked');
+    });
+    it('null clears the seed', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA', seed: 3 }));
+      expect((await service.assignSeed('tournament-1', 'pA', null, 'organiser-1')).seed).toBeNull();
+    });
+  });
+
+  describe('generateDraw refuses unimplemented formats (B-17)', () => {
+    it.each([
+      [{ drawFormat: 'DOUBLE_ELIMINATION' }, 'not available'],
+      [{ tournamentType: 'DOUBLES_MEN' }, 'not available'],
+    ])('%o → 400, and the old draw is left alone', async (overrides, msg) => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament(overrides as any));
+      mockParticipantsRepo.find.mockResolvedValue([1, 2, 3, 4].map(() => makeParticipant()));
+      await expect(service.generateDraw('tournament-1', 'organiser-1')).rejects.toThrow(msg);
+      expect(mockMatchesRepo.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Group Stage + Knockout configurations (B-10)', () => {
+    const run = async (players: number, groups: number, advance: number) => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({
+        drawFormat: 'GROUP_STAGE_KNOCKOUT', numberOfGroups: groups, advancePerGroup: advance, seeded: false, minParticipants: 2,
+      }));
+      mockParticipantsRepo.find.mockResolvedValue(Array.from({ length: players }, (_, i) => makeParticipant({ id: `p${i}` })));
+      let g = 0;
+      mockGroupsRepo.create.mockImplementation((d) => ({ ...d, id: `group-${++g}` }));
+      mockGroupsRepo.save.mockImplementation(async (x) => x);
+      mockParticipantsRepo.save.mockImplementation(async (x) => x);
+      mockMatchesRepo.save.mockImplementation(async (x) => x);
+      return service.generateDraw('tournament-1', 'organiser-1');
+    };
+    const ko = (matches: TournamentMatchEntity[]) => matches.filter((m) => m.stage === 'KNOCKOUT');
+
+    it('12 players / 3 groups / 2 advance → 8-slot knockout with 2 byes for top qualifiers', async () => {
+      const { matches } = await run(12, 3, 2);
+      const r1 = ko(matches).filter((m) => m.round === 1);
+      expect(r1).toHaveLength(4);
+      expect(ko(matches)).toHaveLength(7);
+      const labels = r1.flatMap((m) => [m.slot1, m.slot2]);
+      expect(labels.filter((l) => l === 'BYE')).toHaveLength(2);
+      // the byes face group winners, never a runner-up
+      for (const m of r1.filter((m) => m.slot1 === 'BYE' || m.slot2 === 'BYE'))
+        expect([m.slot1, m.slot2].find((l) => l !== 'BYE')).toMatch(/^[A-C]1$/);
+      expect(Number.isInteger(ko(matches).length)).toBe(true);
+    });
+
+    it.each([[18, 6, 1], [9, 3, 1], [24, 4, 3]])('%i players / %i groups / %i advance builds without error', async (n, g, a) => {
+      const { matches } = await run(n, g, a);
+      const size = ko(matches).filter((m) => m.round === 1).length * 2;
+      expect(size & (size - 1)).toBe(0);
+      expect(size).toBeGreaterThanOrEqual(g * a);
+    });
+
+    it('6 players / 4 groups → 400, before the old draw is deleted', async () => {
+      await expect(run(6, 4, 2)).rejects.toThrow('use at most 2 groups');
+      expect(mockMatchesRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('groups of 3 cannot send 3 through → 400', async () => {
+      await expect(run(9, 3, 3)).rejects.toThrow('at most 2 can advance');
+    });
+
+    it('fewer than 6 players → 400', async () => {
+      await expect(run(5, 2, 1)).rejects.toThrow('at least 6 players');
+    });
+  });
+
+  describe('draw is locked after the first result (B-19)', () => {
+    const played = [
+      { id: 'm1', status: 'COMPLETED', participant1Id: 'pA', participant2Id: 'pB' },
+      { id: 'm2', status: 'SCHEDULED', participant1Id: 'pC', participant2Id: 'pD' },
+    ] as TournamentMatchEntity[];
+
+    it('swap → 400', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockMatchesRepo.find.mockResolvedValue(played);
+      await expect(service.swapParticipants('tournament-1', { participantId1: 'pC', participantId2: 'pD' }, 'organiser-1'))
+        .rejects.toThrow('locked');
+      expect(mockMatchesRepo.save).not.toHaveBeenCalled();
+    });
+    it('slot edit → 400', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockMatchesRepo.findOne.mockResolvedValue(played[1]);
+      mockMatchesRepo.find.mockResolvedValue(played);
+      await expect(service.updateDrawSlot('tournament-1', 'm2', 'participant1Id', null, 'organiser-1')).rejects.toThrow('locked');
+    });
+    it('BYEs alone do not lock the draw', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
+      mockMatchesRepo.find.mockResolvedValue([{ id: 'b', status: 'BYE', participant1Id: 'pA', winnerId: 'pA' }] as any);
+      mockMatchesRepo.save.mockImplementation(async (m) => m);
+      await expect(service.swapParticipants('tournament-1', { participantId1: 'pA', participantId2: 'pZ' }, 'organiser-1'))
+        .resolves.toBeDefined();
     });
   });
 

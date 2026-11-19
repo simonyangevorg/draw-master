@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Delete,
-  Param, ParseUUIDPipe, Body, HttpCode, UseGuards, ValidationPipe,
+  Param, ParseUUIDPipe, Body, HttpCode, UseGuards, ValidationPipe, Headers, Query,
 } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
@@ -8,6 +8,8 @@ import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
+import { AssignSeedDto } from './dto/assign-seed.dto';
+import { UpdateDrawSlotDto } from './dto/update-draw-slot.dto';
 import { JwtGuard } from '../auth/jwt.guard';
 import { OrganiserGuard } from '../auth/organiser.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -21,8 +23,12 @@ export class TournamentsController {
 
   // ── Public reads ──────────────────────────
 
+  // Public, but a signed-in caller also sees their own drafts and entries.
+  // X-User-Sub is set (or blanked) by the gateway, never by the client.
   @Get('tournaments')
-  findAll() { return this.tournamentsService.findAll(); }
+  findAll(@Headers('x-user-sub') sub?: string, @Query('status') status?: string) {
+    return this.tournamentsService.findAll(sub || undefined, status);
+  }
 
   @Get('tournaments/me/participations')
   @UseGuards(JwtGuard)
@@ -101,8 +107,8 @@ export class TournamentsController {
 
   @Patch('tournaments/:id/participants/:pid/seed')
   @UseGuards(JwtGuard)
-  assignSeed(@Param('id', ParseUUIDPipe) id: string, @Param('pid', ParseUUIDPipe) pid: string, @Body('seed') seed: number, @CurrentUser() user: any) {
-    return this.tournamentsService.assignSeed(id, pid, seed, user.sub);
+  assignSeed(@Param('id', ParseUUIDPipe) id: string, @Param('pid', ParseUUIDPipe) pid: string, @Body() dto: AssignSeedDto, @CurrentUser() user: any) {
+    return this.tournamentsService.assignSeed(id, pid, dto.seed, user.sub);
   }
 
   // ── Draw ─────────────────────────────────
@@ -124,11 +130,10 @@ export class TournamentsController {
   updateDrawSlot(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('matchId', ParseUUIDPipe) matchId: string,
-    @Body('slot') slot: string,
-    @Body('participantId') participantId: string | null,
+    @Body() dto: UpdateDrawSlotDto,
     @CurrentUser() user: any,
   ) {
-    return this.tournamentsService.updateDrawSlot(id, matchId, slot, participantId ?? null, user.sub);
+    return this.tournamentsService.updateDrawSlot(id, matchId, dto.slot, dto.participantId ?? null, user.sub);
   }
 
   @Patch('tournaments/:id/matches/:matchId')

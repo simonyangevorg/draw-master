@@ -9,7 +9,8 @@ import { TournamentEntity } from './entities/tournament.entity';
 import { ParticipantEntity } from './entities/participant.entity';
 import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
-import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { CreateTournamentDto, SUPPORTED_FORMATS, SUPPORTED_TYPES } from './dto/create-tournament.dto';
+import { today } from './dto/validators';
 import { UpdateTournamentDto, FORMAT_FIELDS } from './dto/update-tournament.dto';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
@@ -39,8 +40,34 @@ export class TournamentsService {
 
   // ── CRUD ──────────────────────────────────
 
-  findAll() {
-    return this.tournamentsRepo.find({ order: { createdAt: 'DESC' } });
+  /**
+   * The tournament list, filtered for whoever is asking (B-21; club-scoped
+   * visibility replaces this in L-06):
+   * - your own tournaments, and ones you've entered, are always listed;
+   * - other people's DRAFTs and non-public tournaments are never listed;
+   * - COMPLETED and CANCELLED ones are left out unless ?status= asks for them.
+   * `status` is a comma-separated list of statuses to restrict to.
+   */
+  async findAll(requesterId?: string, status?: string) {
+    const all = await this.tournamentsRepo.find({ order: { createdAt: 'DESC' } });
+    const wanted = status
+      ? new Set(status.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean))
+      : null;
+    const entered = requesterId
+      ? new Set((await this.participantsRepo.find({ where: { playerId: requesterId } })).map((p) => p.tournamentId))
+      : new Set<string>();
+    return all.filter((t) => {
+      const own = !!requesterId && t.organiserId === requesterId;
+      const involved = own || entered.has(t.id);
+      if (wanted) {
+        if (!wanted.has(t.status)) return false;
+      } else if (!involved && (t.status === 'COMPLETED' || t.status === 'CANCELLED')) {
+        return false;
+      }
+      if (own) return true;
+      if (t.status === 'DRAFT') return false;
+      return t.isPublic !== false || entered.has(t.id);
+    });
   }
 
   async findOne(id: string) {
@@ -84,10 +111,22 @@ export class TournamentsService {
     if (t.status !== 'DRAFT' && formatChanges.length) {
       throw new BadRequestException(`Only a DRAFT tournament can change: ${formatChanges.join(', ')}`);
     }
-    const start = dto.startDate ?? (t as any).startDate;
-    const end = dto.endDate ?? (t as any).endDate;
-    if (start && end && new Date(end) < new Date(start)) {
+    // Cross-field rules, checked on the merged result since a PATCH usually
+    // carries only one side of each pair (B-14).
+    const day = (v: any) => (v == null ? null : String(v).slice(0, 10));
+    const start = day(dto.startDate ?? t.startDate);
+    const end = day(dto.endDate ?? t.endDate);
+    const deadline = day(dto.registrationDeadline ?? t.registrationDeadline);
+    if (start && end && end < start) {
       throw new BadRequestException('endDate must be on or after startDate');
+    }
+    if (deadline && start && deadline > start) {
+      throw new BadRequestException('registrationDeadline must be on or before startDate');
+    }
+    const min = dto.minParticipants ?? t.minParticipants;
+    const max = dto.maxParticipants ?? t.maxParticipants;
+    if (min != null && max != null && min > max) {
+      throw new BadRequestException('minParticipants cannot be more than maxParticipants');
     }
     // Copy only the validated DTO fields; status/organiserId/clubId can't
     // arrive here (forbidNonWhitelisted rejects them with 400).
@@ -130,6 +169,10 @@ export class TournamentsService {
       throw new ForbiddenException('Cannot enroll another player');
     }
     if (t.status !== 'OPEN') throw new BadRequestException('Tournament is not open for registration');
+    // The organiser can still add a late entry by hand.
+    if (t.registrationDeadline && t.organiserId !== requesterId && today() > String(t.registrationDeadline).slice(0, 10)) {
+      throw new BadRequestException(`Registration closed on ${String(t.registrationDeadline).slice(0, 10)}`);
+    }
     const approved = await this.participantsRepo.count({ where: { tournamentId, status: 'APPROVED' } });
     if (approved >= t.maxParticipants) throw new BadRequestException('Tournament is full');
     const existing = await this.participantsRepo.findOne({ where: { tournamentId, playerId: dto.playerId } });
@@ -146,8 +189,13 @@ export class TournamentsService {
   async approveParticipant(tournamentId: string, participantId: string, organiserId: string) {
     const t = await this.findOne(tournamentId);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+    this.assertEntriesEditable(t);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
+    if (p.status !== 'PENDING') throw new BadRequestException(`Only a pending entry can be approved (this one is ${p.status})`);
+    const approved = await this.participantsRepo.count({ where: { tournamentId, status: 'APPROVED' } });
+    if (approved >= t.maxParticipants)
+      throw new BadRequestException(`The tournament is full (${approved}/${t.maxParticipants} approved)`);
     p.status = 'APPROVED';
     const saved = await this.participantsRepo.save(p);
     this.auditLogger.record({ actorId: organiserId, action: 'PARTICIPANT_APPROVED', targetId: participantId, tournamentId });
@@ -157,8 +205,10 @@ export class TournamentsService {
   async rejectParticipant(tournamentId: string, participantId: string, organiserId: string) {
     const t = await this.findOne(tournamentId);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+    this.assertEntriesEditable(t);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
+    if (p.status !== 'PENDING') throw new BadRequestException(`Only a pending entry can be rejected (this one is ${p.status})`);
     p.status = 'REJECTED';
     const saved = await this.participantsRepo.save(p);
     this.auditLogger.record({ actorId: organiserId, action: 'PARTICIPANT_REJECTED', targetId: participantId, tournamentId });
@@ -179,13 +229,26 @@ export class TournamentsService {
     return saved;
   }
 
-  async assignSeed(tournamentId: string, participantId: string, seed: number, organiserId: string) {
+  async assignSeed(tournamentId: string, participantId: string, seed: number | null, organiserId: string) {
     const t = await this.findOne(tournamentId);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+    this.assertEntriesEditable(t);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
+    if (seed !== null) {
+      if (seed > t.maxParticipants) throw new BadRequestException(`Seed must be between 1 and ${t.maxParticipants}`);
+      const clash = (t.participants ?? []).find((o) =>
+        o.id !== p.id && o.seed === seed && o.status !== 'WITHDRAWN' && o.status !== 'REJECTED');
+      if (clash) throw new BadRequestException(`Seed ${seed} is already taken`);
+    }
     p.seed = seed;
     return this.participantsRepo.save(p);
+  }
+
+  /** Entries, approvals and seeds are fixed once the draw is made. */
+  private assertEntriesEditable(t: TournamentEntity) {
+    if (t.status !== 'DRAFT' && t.status !== 'OPEN')
+      throw new BadRequestException('Entries and seeds are locked once the draw has been made');
   }
 
   // ── DRAW GENERATION ───────────────────────
@@ -198,6 +261,13 @@ export class TournamentsService {
     const participants = await this.participantsRepo.find({ where: { tournamentId, status: 'APPROVED' } });
     if (participants.length < t.minParticipants)
       throw new BadRequestException(`Need at least ${t.minParticipants} approved participants`);
+    // B-17: never silently build a different draw from the one asked for.
+    if (!SUPPORTED_FORMATS.includes(t.drawFormat))
+      throw new BadRequestException(`${t.drawFormat} draws are not available yet; change the format first`);
+    if (!SUPPORTED_TYPES.includes(t.tournamentType))
+      throw new BadRequestException(`${t.tournamentType} is not available yet (doubles pairs arrive with F-04)`);
+    // Validate the configuration before the old draw is touched.
+    if (t.drawFormat === 'GROUP_STAGE_KNOCKOUT') this.groupConfig(t, participants.length);
 
     await this.matchesRepo.delete({ tournamentId });
     await this.groupsRepo.delete({ tournamentId });
@@ -230,7 +300,10 @@ export class TournamentsService {
 
   private nextPow2(n: number): number { let p = 1; while (p < n) p *= 2; return p; }
 
+  /** Bracket order for `size` slots (1 v size, 2 v size-1, ...). `size` must be a power of two. */
   private seededSlots(size: number): number[] {
+    if (!Number.isInteger(size) || size < 1 || (size & (size - 1)) !== 0)
+      throw new Error(`seededSlots needs a power of two, got ${size}`);
     if (size === 1) return [0];
     const half = this.seededSlots(size / 2);
     const r = new Array(size);
@@ -297,9 +370,29 @@ export class TournamentsService {
     return this.matchesRepo.save(all as TournamentMatchEntity[]);
   }
 
-  private async generateGroupStage(t: TournamentEntity, participants: ParticipantEntity[]) {
+  /**
+   * Group sizes for Group Stage + Knockout. Every group needs at least 3
+   * players and at least one more player than it sends through (B-10).
+   */
+  private groupConfig(t: TournamentEntity, players: number) {
     const numGroups = t.numberOfGroups ?? 4;
     const advancePerGroup = t.advancePerGroup ?? 2;
+    const smallest = Math.floor(players / numGroups);
+    if (smallest < 3) {
+      const fits = Math.floor(players / 3);
+      throw new BadRequestException(fits >= 2
+        ? `${players} players can't fill ${numGroups} groups of at least 3; use at most ${fits} groups`
+        : `Group Stage + Knockout needs at least 6 players (2 groups of 3); there are ${players}`);
+    }
+    if (smallest < advancePerGroup + 1) {
+      throw new BadRequestException(
+        `With ${numGroups} groups the smallest group has ${smallest} players, so at most ${smallest - 1} can advance from each`);
+    }
+    return { numGroups, advancePerGroup };
+  }
+
+  private async generateGroupStage(t: TournamentEntity, participants: ParticipantEntity[]) {
+    const { numGroups, advancePerGroup } = this.groupConfig(t, participants.length);
     const shuffled = this.shuffle(participants);
     const all: Partial<TournamentMatchEntity>[] = [];
 
@@ -334,12 +427,14 @@ export class TournamentsService {
       for (let g = 0; g < numGroups; g++)
         slotLabels.push(`${GROUP_LETTERS[g]}${rank}`);
 
-    const totalKO = slotLabels.length;
-    const koRounds = Math.ceil(Math.log2(totalKO));
+    // The bracket is padded to the next power of two. Seeding order puts the
+    // padding against the top qualifiers, who get a bye (wired up in F-09).
+    const size = this.nextPow2(slotLabels.length);
+    const koRounds = Math.log2(size);
     const koAll: Partial<TournamentMatchEntity>[] = [];
 
     for (let round = 1; round <= koRounds; round++) {
-      const count = totalKO / Math.pow(2, round);
+      const count = size / Math.pow(2, round);
       for (let pos = 0; pos < count; pos++)
         koAll.push({ id: uuidv4(), tournamentId: t.id, stage: 'KNOCKOUT', round, position: pos, status: 'SCHEDULED' });
     }
@@ -354,10 +449,10 @@ export class TournamentsService {
 
     // Assign slot labels to round-1 knockout matches using seeded bracket positions
     const r1KO = koAll.filter(m => m.round === 1).sort((a, b) => a.position - b.position);
-    const slots = this.seededSlots(totalKO);
+    const slots = this.seededSlots(size);
     for (let i = 0; i < r1KO.length; i++) {
-      r1KO[i].slot1 = slotLabels[slots[i * 2]];
-      r1KO[i].slot2 = slotLabels[slots[i * 2 + 1]];
+      r1KO[i].slot1 = slotLabels[slots[i * 2]] ?? 'BYE';
+      r1KO[i].slot2 = slotLabels[slots[i * 2 + 1]] ?? 'BYE';
     }
 
     all.push(...koAll);
@@ -374,6 +469,7 @@ export class TournamentsService {
     const t = await this.findOne(tournamentId);
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
     const matches = await this.matchesRepo.find({ where: { tournamentId } });
+    this.assertDrawEditable(matches);
     const changed: TournamentMatchEntity[] = [];
     for (const m of matches) {
       let isChanged = false;
@@ -392,6 +488,7 @@ export class TournamentsService {
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
     const match = await this.matchesRepo.findOne({ where: { id: matchId, tournamentId } });
     if (!match) throw new NotFoundException('Match not found');
+    this.assertDrawEditable(await this.matchesRepo.find({ where: { tournamentId } }));
     if (slot === 'participant1Id') match.participant1Id = participantId;
     else if (slot === 'participant2Id') match.participant2Id = participantId;
     else throw new BadRequestException('slot must be participant1Id or participant2Id');
@@ -399,6 +496,12 @@ export class TournamentsService {
     if (match.participant1Id && match.participant2Id) match.status = 'SCHEDULED';
     else if (!match.participant2Id && match.participant1Id) match.status = 'BYE';
     return this.matchesRepo.save(match);
+  }
+
+  /** Once any match has a result, moving players around would rewrite history (B-19). */
+  private assertDrawEditable(matches: TournamentMatchEntity[]) {
+    if (matches.some((m) => m.status === 'COMPLETED' || m.status === 'WALKOVER'))
+      throw new BadRequestException('The draw is locked once a match has been played');
   }
 
   async updateMatch(tournamentId: string, matchId: string, dto: UpdateMatchDto, organiserId: string) {

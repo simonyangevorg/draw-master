@@ -1,14 +1,33 @@
 import {
   IsString, IsOptional, IsBoolean, IsInt, IsNumber,
-  IsIn, IsDateString, Min, Max,
+  IsIn, IsDateString, IsNotEmpty, MaxLength, Min, Max,
 } from 'class-validator';
+import {
+  Trim, IsNotPastDate, IsOnOrAfterField, IsOnOrBeforeField, IsAtMostField,
+} from './validators';
+
+/**
+ * What can be created today. Double Elimination and doubles/mixed exist in the
+ * entity but aren't implemented (F-10, F-04); until they are, the API refuses
+ * them rather than silently building a singles Single Elimination draw (B-17).
+ */
+export const SUPPORTED_TYPES = ['SINGLES_MEN', 'SINGLES_WOMEN'];
+export const SUPPORTED_FORMATS = ['SINGLE_ELIMINATION', 'ROUND_ROBIN', 'GROUP_STAGE_KNOCKOUT'];
+export const SURFACES = ['CLAY', 'HARD_OUTDOOR', 'HARD_INDOOR', 'GRASS', 'CARPET', 'ACRYLIC', 'ARTIFICIAL_CLAY', 'ARTIFICIAL_GRASS'];
+export const AGE_GROUPS = ['OPEN', 'U18', 'U16', 'U14', 'SENIOR_40'];
+const NOT_YET = { message: '$property must be one of: $constraint1 (doubles and Double Elimination are not available yet)' };
 
 export class CreateTournamentDto {
+  @Trim()
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
   name: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(2000)
   description?: string;
 
   @IsOptional()
@@ -16,38 +35,48 @@ export class CreateTournamentDto {
   clubId?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(100)
   venue?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(100)
   city?: string;
 
   @IsOptional()
+  @Trim()
   @IsString()
+  @MaxLength(100)
   country?: string;
 
   @IsDateString()
+  @IsNotPastDate()
   startDate: string;
 
   @IsDateString()
+  @IsOnOrAfterField('startDate')
   endDate: string;
 
   @IsOptional()
   @IsDateString()
+  @IsNotPastDate()
+  @IsOnOrBeforeField('startDate')
   registrationDeadline?: string;
 
-  @IsIn(['SINGLES_MEN', 'SINGLES_WOMEN', 'DOUBLES_MEN', 'DOUBLES_WOMEN', 'MIXED_DOUBLES'])
+  @IsIn(SUPPORTED_TYPES, NOT_YET)
   tournamentType: string;
 
-  @IsIn(['SINGLE_ELIMINATION', 'DOUBLE_ELIMINATION', 'ROUND_ROBIN', 'GROUP_STAGE_KNOCKOUT'])
+  @IsIn(SUPPORTED_FORMATS, NOT_YET)
   drawFormat: string;
 
-  @IsIn(['CLAY', 'HARD_OUTDOOR', 'HARD_INDOOR', 'GRASS', 'CARPET', 'ACRYLIC', 'ARTIFICIAL_CLAY', 'ARTIFICIAL_GRASS'])
+  @IsIn(SURFACES)
   surface: string;
 
   @IsOptional()
-  @IsIn(['OPEN', 'U18', 'U16', 'U14', 'SENIOR_40'])
+  @IsIn(AGE_GROUPS)
   ageGroup?: string;
 
   @IsOptional()
@@ -58,6 +87,8 @@ export class CreateTournamentDto {
   @IsOptional()
   @IsInt()
   @Min(2)
+  @Max(64)
+  @IsAtMostField('maxParticipants', 32)
   minParticipants?: number;
 
   @IsOptional()
@@ -100,6 +131,8 @@ export class CreateTournamentDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(12)
   tiebreakAt?: number;
 
   @IsOptional()
@@ -120,5 +153,6 @@ export class CreateTournamentDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(4)
   advancePerGroup?: number;
 }
