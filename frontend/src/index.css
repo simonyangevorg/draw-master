@@ -1258,3 +1258,12 @@ button.form-link { background: none; border: 0; padding: 0; cursor: pointer; fon
 .rules-save input { max-width: 220px; }
 .stage-rules { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem 1rem .25rem; margin-bottom: 1rem; }
 .stage-rules h3 { font-size: .95rem; margin: 0 0 .5rem; }
+
+/* ── Score dialog (F-06) ── */
+.score-rules { text-align: center; font-size: .8rem; color: var(--text-muted); margin: -.25rem 0 .75rem; }
+.score-outcomes { display: flex; gap: .35rem; justify-content: center; flex-wrap: wrap; margin-bottom: .75rem; }
+.score-outcome { padding: .3rem .7rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font: inherit; font-size: .8rem; cursor: pointer; }
+.score-outcome.active { border-color: var(--green); background: var(--green-light); color: var(--green-dark); font-weight: 700; }
+.score-tb { width: 3.2rem; margin-left: .35rem; font-size: .8rem; }
+.score-winner-line { text-align: center; margin: .5rem 0; font-size: .9rem; }
+.score-preview { text-align: center; font-weight: 700; margin: .5rem 0; letter-spacing: .02em; }

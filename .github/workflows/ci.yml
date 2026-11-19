@@ -40,6 +40,12 @@ jobs:
           if grep -rniE "pushers|fptc" frontend/src frontend/index.html; then
             echo "Old brand name found in the frontend (see above)" && exit 1
           fi
+      # F-06: the score dialog's validator must agree with the API's on every fixture.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Frontend score rules match the API
+        run: node frontend/scripts/check-score-rules.mjs
 
   # L-01: the schema is owned by migrations. Build a fresh DB from them and fail
   # if the entities describe anything the migrations don't (a forgotten

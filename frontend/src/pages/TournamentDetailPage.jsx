@@ -5,6 +5,8 @@ import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
 import BracketView from "../components/BracketView";
 import GroupStageView from "../components/GroupStageView";
 import Sidebar from "../components/Sidebar";
+import ScoreModal from "../components/ScoreModal";
+import { formatScore } from "../scoreRules";
 import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, VISIBILITY_LABEL, CATEGORY_LABEL, STATUS_LABEL, rulesSummary, setsToWinOf, stagesOf, label } from "../constants";
 
 export default function TournamentDetailPage() {
@@ -101,8 +103,8 @@ export default function TournamentDetailPage() {
     else { flash(await errorMessage(res, "Swap failed"), true); }
   }
 
-  async function scoreMatch(matchId, sets, winnerId) {
-    const res = await apiPatch(`/api/tournaments/${id}/matches/${matchId}`, { sets, winnerId });
+  async function scoreMatch(matchId, sets, winnerId, outcome = "COMPLETED") {
+    const res = await apiPatch(`/api/tournaments/${id}/matches/${matchId}`, { sets, winnerId, outcome });
     if (res.ok) { await loadTournament(); flash("Score saved — winner advanced."); }
     else { flash(await errorMessage(res, "Failed to save score"), true); }
   }
@@ -595,12 +597,10 @@ function DrawManager({ draw, participants, pool, isOrganiser, drawLocked, tourna
       {scoreMatch && (
         <ScoreModal
           match={scoreMatch}
-          pMap={pMap}
-          setsToWin={setsToWin}
           playerLabel={playerLabel}
-          onSave={async (sets, winnerId) => {
+          onSave={async (sets, winnerId, outcome) => {
             setScoreMatch(null);
-            await onScore(scoreMatch.id, sets, winnerId);
+            await onScore(scoreMatch.id, sets, winnerId, outcome);
           }}
           onClose={() => setScoreMatch(null)}
         />
@@ -790,10 +790,8 @@ function DraggableBracket({ draw, pMap, isOrganiser, drawLocked, dragSource, onD
                   className="bk-score-summary"
                   onClick={canScore ? () => onCardClick(match) : undefined}
                 >
-                  {isDone && match.sets?.length > 0
-                    ? match.sets.map((s, i) => (
-                        <span key={i} className="bk-score-set">{s.p1}–{s.p2}</span>
-                      ))
+                  {isDone
+                    ? <span className="bk-score-set">{formatScore(match.sets ?? [], match.outcome ?? "COMPLETED")}</span>
                     : <span className="bk-score-empty">
                         {canScore ? "click to score" : isBye ? "BYE" : ""}
                       </span>
@@ -803,126 +801,6 @@ function DraggableBracket({ draw, pMap, isOrganiser, drawLocked, dragSource, onD
             );
           });
         })}
-      </div>
-    </div>
-  );
-}
-
-// ── Score modal ───────────────────────────────────────────────────────────────
-function ScoreModal({ match, pMap, setsToWin: fallbackSetsToWin, playerLabel, onSave, onClose }) {
-  // Each match carries the rules it is played under (F-05).
-  const setsToWin = match.rules ? setsToWinOf(match.rules) : fallbackSetsToWin;
-  const maxSets   = setsToWin * 2 - 1; // best-of-3 → max 3 sets, best-of-5 → max 5
-  const initSets  = Array.from({ length: setsToWin }, () => ({ p1: "", p2: "" }));
-  const [sets, setSets]       = useState(initSets);
-  const [winnerId, setWinner] = useState("");
-  const [error, setError]     = useState("");
-
-  const p1 = match.participant1Id;
-  const p2 = match.participant2Id;
-
-  // Derive winner automatically from sets when possible
-  function derivedWinner(currentSets) {
-    let w1 = 0, w2 = 0;
-    for (const s of currentSets) {
-      const a = parseInt(s.p1), b = parseInt(s.p2);
-      if (isNaN(a) || isNaN(b)) continue;
-      if (a > b) w1++; else if (b > a) w2++;
-    }
-    if (w1 >= setsToWin) return p1;
-    if (w2 >= setsToWin) return p2;
-    return "";
-  }
-
-  function updateSet(i, key, val) {
-    const next = sets.map((s, idx) => idx === i ? { ...s, [key]: val } : s);
-    setSets(next);
-    const auto = derivedWinner(next);
-    if (auto) setWinner(auto);
-    setError("");
-  }
-
-  function addSet() {
-    if (sets.length < maxSets) setSets(s => [...s, { p1: "", p2: "" }]);
-  }
-
-  function removeSet() {
-    if (sets.length > 1) setSets(s => s.slice(0, -1));
-  }
-
-  function handleSave() {
-    const parsed = sets.map(s => ({ p1: parseInt(s.p1), p2: parseInt(s.p2) }));
-    if (parsed.some(s => isNaN(s.p1) || isNaN(s.p2))) { setError("Fill in all set scores."); return; }
-    if (!winnerId) { setError("Select the winner."); return; }
-    onSave(parsed, winnerId);
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>Enter Match Score</h3>
-          <button className="modal-close" onClick={onClose}>×</button>
-        </div>
-
-        <div className="score-players">
-          <span className="score-player-name">{playerLabel(p1)}</span>
-          <span className="score-vs">vs</span>
-          <span className="score-player-name">{playerLabel(p2)}</span>
-        </div>
-
-        <div className="score-sets">
-          {sets.map((s, i) => (
-            <div key={i} className="score-set-row">
-              <span className="score-set-label">Set {i + 1}</span>
-              <input
-                className="score-input"
-                type="number" min="0" max="7"
-                value={s.p1}
-                onChange={e => updateSet(i, "p1", e.target.value)}
-                placeholder="0"
-              />
-              <span className="score-dash">–</span>
-              <input
-                className="score-input"
-                type="number" min="0" max="7"
-                value={s.p2}
-                onChange={e => updateSet(i, "p2", e.target.value)}
-                placeholder="0"
-              />
-            </div>
-          ))}
-        </div>
-
-        <div className="score-set-controls">
-          {sets.length < maxSets && (
-            <button className="btn-add-set" onClick={addSet}>+ Add set</button>
-          )}
-          {sets.length > 1 && (
-            <button className="btn-remove-set" onClick={removeSet}>– Remove set</button>
-          )}
-        </div>
-
-        <div className="score-winner">
-          <div className="score-winner-label">Winner</div>
-          <div className="score-winner-btns">
-            <button
-              className={`score-winner-btn${winnerId === p1 ? " active" : ""}`}
-              onClick={() => setWinner(p1)}
-            >{playerLabel(p1)}</button>
-            <button
-              className={`score-winner-btn${winnerId === p2 ? " active" : ""}`}
-              onClick={() => setWinner(p2)}
-            >{playerLabel(p2)}</button>
-          </div>
-        </div>
-
-        {error && <div className="score-error">{error}</div>}
-
-        <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={handleSave}>Save & Advance Winner</button>
-        </div>
       </div>
     </div>
   );
