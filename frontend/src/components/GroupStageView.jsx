@@ -3,8 +3,11 @@ import ScoreModal from "./ScoreModal";
 import { formatScore } from "../scoreRules";
 import BracketView from "./BracketView";
 
-// ── Standings computation ─────────────────────────────────────────────────────
-function computeStandings(members, matches) {
+// ── Standings ─────────────────────────────────────────────────────────────────
+// The table comes from the API (GET .../events/:eid/standings, F-08: wins, then
+// head-to-head / mini-league, then % sets, then % games), which is also what
+// decides the champion. This local version only fills in until it arrives.
+function localStandings(members, matches) {
   const stats = {};
   for (const p of members) stats[p.id] = { pid: p.id, w: 0, l: 0, gw: 0, gl: 0 };
   for (const m of matches) {
@@ -21,17 +24,18 @@ function computeStandings(members, matches) {
     if (m.winnerId === m.participant1Id)      { s1.w++; s2.l++; }
     else if (m.winnerId === m.participant2Id) { s2.w++; s1.l++; }
   }
-  return Object.values(stats).sort((a, b) =>
-    b.w - a.w || (b.gw - b.gl) - (a.gw - a.gl)
-  );
+  return Object.values(stats)
+    .sort((a, b) => b.w - a.w || (b.gw - b.gl) - (a.gw - a.gl))
+    .map(s => ({ participantId: s.pid, played: s.w + s.l, wins: s.w, losses: s.l, setsWon: 0, setsLost: 0, gamesWon: s.gw, gamesLost: s.gl, tied: false }));
 }
 
 // ── Single group block ────────────────────────────────────────────────────────
-function GroupPool({ group, matches, pMap, advancePerGroup, isOrganiser, setsToWin, onScore }) {
+function GroupPool({ group, matches, pMap, advancePerGroup, isOrganiser, onScore, serverRows, roundRobin }) {
   const [activeModal, setActiveModal] = useState(null);
 
   const members    = (group.participantIds ?? []).map(id => pMap[id]).filter(Boolean);
-  const standings  = computeStandings(members, matches);
+  const standings  = serverRows ?? localStandings(members, matches);
+  const advancing  = roundRobin ? 0 : advancePerGroup;
   const scheduled  = matches.filter(m => m.status === "SCHEDULED" || m.status === "IN_PROGRESS");
 
   function label(p) {
@@ -112,29 +116,60 @@ function GroupPool({ group, matches, pMap, advancePerGroup, isOrganiser, setsToW
           <thead>
             <tr>
               <th></th>
-              <th>Matches</th>
+              <th title="Played">P</th>
+              <th title="Won–lost">W–L</th>
+              <th>Sets</th>
               <th>Games</th>
-              <th>Position</th>
+              <th>Pos</th>
             </tr>
           </thead>
           <tbody>
             {standings.map((s, i) => (
-              <tr key={s.pid} className={i < advancePerGroup ? "gs-row-advance" : ""}>
+              <tr key={s.participantId} className={i < advancing ? "gs-row-advance" : ""}>
                 <td className="gs-std-name">
-                  {i < advancePerGroup && <span className="gs-advance-dot" title="Advances to knockout" />}
-                  {label(pMap[s.pid])}
+                  {i < advancing && <span className="gs-advance-dot" title="Advances to knockout" />}
+                  {label(pMap[s.participantId])}
                 </td>
-                <td className="gs-std-stat">{s.w}–{s.l}</td>
-                <td className="gs-std-stat">{s.gw}–{s.gl}</td>
-                <td className="gs-std-pos">{i + 1}</td>
+                <td className="gs-std-stat">{s.played}</td>
+                <td className="gs-std-stat">{s.wins}–{s.losses}</td>
+                <td className="gs-std-stat">{s.setsWon}–{s.setsLost}</td>
+                <td className="gs-std-stat">{s.gamesWon}–{s.gamesLost}</td>
+                <td className="gs-std-pos">{i + 1}{s.tied && <span className="gs-tied" title="Level on every tiebreak: the organiser decides">=</span>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <p className="gs-legend">
+        Order: wins, then head-to-head (a mini-league for three or more level), then % sets, then % games.
+        A walkover counts as a win to love. <span className="gs-tied">=</span> level on everything: the organiser decides.
+      </p>
+
+      {/* ── Round by round (F-08) ── */}
+      {roundRobin && (
+        <div className="gs-rounds">
+          {[...new Set(matches.map(m => m.round))].sort((a, b) => a - b).map(r => (
+            <div key={r} className="gs-round">
+              <div className="gs-scheduled-title">Round {r}</div>
+              {matches.filter(m => m.round === r).map(m => {
+                const done = m.status === "COMPLETED" || m.status === "WALKOVER";
+                const canScore = isOrganiser && !done;
+                return (
+                  <div key={m.id} className={`gs-sched-row${canScore ? " gs-sched-clickable" : ""}`}
+                    onClick={canScore ? () => setActiveModal(m) : undefined}>
+                    <span className={`gs-sched-player${done && m.winnerId === m.participant1Id ? " gs-winner" : ""}`}>{label(pMap[m.participant1Id])}</span>
+                    <span className="gs-sched-vs">{done ? formatScore(m.sets ?? [], m.outcome ?? "COMPLETED") : "vs"}</span>
+                    <span className={`gs-sched-player${done && m.winnerId === m.participant2Id ? " gs-winner" : ""}`}>{label(pMap[m.participant2Id])}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Scheduled matches ── */}
-      {scheduled.length > 0 && (
+      {!roundRobin && scheduled.length > 0 && (
         <div className="gs-scheduled">
           <div className="gs-scheduled-title">Scheduled Matches</div>
           <div className="gs-sched-list">
@@ -176,11 +211,10 @@ function GroupPool({ group, matches, pMap, advancePerGroup, isOrganiser, setsToW
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
-export default function GroupStageView({ tournament, draw, participants, isOrganiser, onScore }) {
+export default function GroupStageView({ tournament, draw, participants, isOrganiser, onScore, standings = [], roundRobin = false }) {
   const pMap          = Object.fromEntries(participants.map(p => [p.id, p]));
   const groups        = (tournament.groups ?? []).slice().sort((a, b) => a.position - b.position);
   const advancePerGroup = tournament.advancePerGroup ?? 2;
-  const setsToWin     = 2; // fallback only: each match carries its own rules (F-05)
 
   const groupMatches    = draw.filter(m => m.stage === "GROUP");
   const knockoutMatches = draw.filter(m => m.stage === "KNOCKOUT");
@@ -196,13 +230,14 @@ export default function GroupStageView({ tournament, draw, participants, isOrgan
             pMap={pMap}
             advancePerGroup={advancePerGroup}
             isOrganiser={isOrganiser}
-            setsToWin={setsToWin}
             onScore={onScore}
+            serverRows={standings.find(s => s.groupId === group.id)?.rows}
+            roundRobin={roundRobin}
           />
         ))}
       </div>
 
-      {knockoutMatches.length > 0 && (
+      {!roundRobin && knockoutMatches.length > 0 && (
         <div className="gs-knockout-section">
           <div className="gs-knockout-header">
             <h3 className="gs-section-title">Knockout Phase</h3>

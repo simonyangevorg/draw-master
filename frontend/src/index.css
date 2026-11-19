@@ -1267,3 +1267,11 @@ button.form-link { background: none; border: 0; padding: 0; cursor: pointer; fon
 .score-tb { width: 3.2rem; margin-left: .35rem; font-size: .8rem; }
 .score-winner-line { text-align: center; margin: .5rem 0; font-size: .9rem; }
 .score-preview { text-align: center; font-weight: 700; margin: .5rem 0; letter-spacing: .02em; }
+
+/* ── Round robin and champion (F-08) ── */
+.gs-legend { font-size: .75rem; color: var(--text-muted); margin: .5rem 0 0; }
+.gs-tied { margin-left: .2rem; font-weight: 700; color: #b45309; }
+.gs-rounds { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .75rem; margin-top: 1rem; }
+.gs-round .gs-sched-row { display: flex; justify-content: space-between; gap: .5rem; }
+.gs-winner { font-weight: 700; }
+.champion-banner { background: linear-gradient(135deg, #fef3c7, #fde68a); border: 1px solid #f59e0b; border-radius: var(--radius); padding: .75rem 1rem; margin: 0 0 1rem; font-size: 1rem; }

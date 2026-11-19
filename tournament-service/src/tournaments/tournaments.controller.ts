@@ -105,6 +105,15 @@ export class TournamentsController {
     return this.tournamentsService.getDraw(id, user);
   }
 
+  @Get('tournaments/:id/events/:eid/standings')
+  getStandings(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('eid', ParseUUIDPipe) eid: string,
+    @OptionalUser() user: CurrentUser | null,
+  ) {
+    return this.tournamentsService.getStandings(id, eid, user);
+  }
+
   @Get('tournaments/:id/events/:eid/draw')
   getEventDraw(
     @Param('id', ParseUUIDPipe) id: string,

@@ -6,6 +6,7 @@ import { ClubAccess1763600000200 } from './1763600000200-ClubAccess';
 import { Events1763600000300 } from './1763600000300-Events';
 import { MatchRules1763600000400 } from './1763600000400-MatchRules';
 import { MatchOutcome1763600000500 } from './1763600000500-MatchOutcome';
+import { EventChampion1763600000600 } from './1763600000600-EventChampion';
 
 export const MIGRATIONS = [
   Baseline1763600000000,
@@ -14,4 +15,5 @@ export const MIGRATIONS = [
   Events1763600000300,
   MatchRules1763600000400,
   MatchOutcome1763600000500,
+  EventChampion1763600000600,
 ];

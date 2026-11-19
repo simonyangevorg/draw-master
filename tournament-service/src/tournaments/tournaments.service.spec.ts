@@ -778,6 +778,9 @@ describe('TournamentsService', () => {
       const tournament = makeTournament({ drawFormat: 'ROUND_ROBIN', seeded: true });
       mockTournamentsRepo.findOne.mockResolvedValue(tournament);
       mockParticipantsRepo.find.mockResolvedValue(participants);
+      mockGroupsRepo.create.mockImplementation((d) => ({ ...d, id: 'rr-group' }));
+      mockGroupsRepo.save.mockImplementation(async (g) => g);
+      mockParticipantsRepo.save.mockImplementation(async (p) => p);
       mockMatchesRepo.delete.mockResolvedValue(undefined);
       mockGroupsRepo.delete.mockResolvedValue(undefined);
       mockMatchesRepo.save.mockImplementation(async (m) => m);
@@ -810,10 +813,15 @@ describe('TournamentsService', () => {
       expect(unique.size).toBe(matches.length);
     });
 
-    it('all matches are round 1 — Round Robin has no round grouping', async () => {
+    it('F-08: rounds by the circle method, one group, stage GROUP (5 players: 5 rounds)', async () => {
       const { matches } = await run(5);
 
-      expect(matches.every((m) => m.round === 1)).toBe(true);
+      expect(new Set(matches.map((m) => m.round)).size).toBe(5);
+      expect(matches.every((m) => m.stage === 'GROUP' && m.groupId === 'rr-group')).toBe(true);
+      for (let r = 1; r <= 5; r++) {
+        const ids = matches.filter((m) => m.round === r).flatMap((m) => [m.participant1Id, m.participant2Id]);
+        expect(new Set(ids).size).toBe(ids.length);
+      }
     });
   });
 
@@ -1595,6 +1603,68 @@ describe('TournamentsService', () => {
       const m: any = await score({ winnerId: 'part1', sets: [{ p1: 6, p2: 1 }, { p1: 6, p2: 1 }] });
       expect(m).toMatchObject({ status: 'COMPLETED', outcome: 'COMPLETED' });
       expect(mockStatsClient.emit).toHaveBeenCalledWith('match.corrected', expect.objectContaining({ previous: expect.objectContaining({ outcome: 'WALKOVER' }) }));
+    });
+  });
+
+  describe('events finish with a champion (F-08 / F-12 triggers)', () => {
+    const a = makeParticipant({ id: 'pa', playerId: 'A', eventId: 'event-1' } as any);
+    const b = makeParticipant({ id: 'pb', playerId: 'B', eventId: 'event-1' } as any);
+    const c = makeParticipant({ id: 'pc', playerId: 'C', eventId: 'event-1' } as any);
+    const RULES = { bestOf: 3, gamesPerSet: 6, tiebreakAt: 6, decidingSet: 'FULL', noAd: false };
+    const WIN = [{ p1: 6, p2: 2 }, { p1: 6, p2: 2 }];
+    const tournament = (drawFormat: string, events?: any[]) => makeTournament({
+      status: 'IN_PROGRESS', participants: [a, b, c],
+      events: events ?? [{ id: 'event-1', drawFormat, status: 'IN_PROGRESS', groupRules: RULES, knockoutRules: RULES, finalRules: null }],
+    } as any);
+    const scoreIt = (t: any, match: any, all: any[]) => {
+      mockTournamentsRepo.findOne.mockResolvedValue(t);
+      mockMatchesRepo.findOne.mockResolvedValue(match);
+      mockMatchesRepo.find.mockResolvedValue(all);
+      mockMatchesRepo.save.mockImplementation(async (x) => x);
+      return service.updateMatch('tournament-1', match.id, { winnerId: match.participant1Id, sets: WIN }, actor('organiser-1'));
+    };
+
+    it('round robin: the last result completes the event, top of the table is champion', async () => {
+      const t = tournament('ROUND_ROBIN');
+      const m1 = { id: 'm1', eventId: 'event-1', stage: 'GROUP', participant1Id: 'pa', participant2Id: 'pb', status: 'COMPLETED', winnerId: 'pa', outcome: 'COMPLETED', sets: WIN };
+      const m2 = { id: 'm2', eventId: 'event-1', stage: 'GROUP', participant1Id: 'pa', participant2Id: 'pc', status: 'COMPLETED', winnerId: 'pa', outcome: 'COMPLETED', sets: WIN };
+      const m3: any = { id: 'm3', eventId: 'event-1', stage: 'GROUP', participant1Id: 'pb', participant2Id: 'pc', status: 'SCHEDULED', sets: [] };
+      await scoreIt(t, m3, [m1, m2, m3]);
+      expect(t.events[0]).toMatchObject({ status: 'COMPLETED', championEntryId: 'pa' });
+      expect(mockTournamentsRepo.update).toHaveBeenCalledWith('tournament-1', { status: 'COMPLETED' });
+    });
+
+    it('round robin: an earlier result leaves the event in play', async () => {
+      const t = tournament('ROUND_ROBIN');
+      const m1: any = { id: 'm1', eventId: 'event-1', stage: 'GROUP', participant1Id: 'pa', participant2Id: 'pb', status: 'SCHEDULED', sets: [] };
+      const m2 = { id: 'm2', eventId: 'event-1', stage: 'GROUP', participant1Id: 'pa', participant2Id: 'pc', status: 'SCHEDULED', sets: [] };
+      await scoreIt(t, m1, [m1, m2]);
+      expect(t.events[0].status).toBe('IN_PROGRESS');
+    });
+
+    it("knockout: the final's winner is champion; the tournament waits for its other events", async () => {
+      const t = tournament('SINGLE_ELIMINATION', [
+        { id: 'event-1', drawFormat: 'SINGLE_ELIMINATION', status: 'IN_PROGRESS', groupRules: RULES, knockoutRules: RULES, finalRules: null },
+        { id: 'event-2', drawFormat: 'ROUND_ROBIN', status: 'IN_PROGRESS', groupRules: RULES, knockoutRules: RULES, finalRules: null },
+      ]);
+      const final: any = { id: 'f', eventId: 'event-1', stage: 'KNOCKOUT', nextMatchId: null, participant1Id: 'pa', participant2Id: 'pb', status: 'SCHEDULED', sets: [] };
+      await scoreIt(t, final, [final]);
+      expect(t.events[0]).toMatchObject({ status: 'COMPLETED', championEntryId: 'pa' });
+      expect(t.status).toBe('IN_PROGRESS');
+    });
+
+    it('a finished tournament still accepts a correction (F-07)', async () => {
+      const t = tournament('SINGLE_ELIMINATION');
+      t.status = 'COMPLETED';
+      t.events[0].status = 'COMPLETED';
+      t.events[0].championEntryId = 'pa';
+      const final: any = { id: 'f', eventId: 'event-1', stage: 'KNOCKOUT', nextMatchId: null, participant1Id: 'pa', participant2Id: 'pb', status: 'COMPLETED', winnerId: 'pa', outcome: 'COMPLETED', sets: WIN };
+      mockTournamentsRepo.findOne.mockResolvedValue(t);
+      mockMatchesRepo.findOne.mockResolvedValue(final);
+      mockMatchesRepo.find.mockResolvedValue([final]);
+      mockMatchesRepo.save.mockImplementation(async (x) => x);
+      await service.updateMatch('tournament-1', 'f', { winnerId: 'pb', sets: [{ p1: 2, p2: 6 }, { p1: 2, p2: 6 }] }, actor('organiser-1'));
+      expect(t.events[0].championEntryId).toBe('pb');
     });
   });
 

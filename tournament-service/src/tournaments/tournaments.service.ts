@@ -17,6 +17,7 @@ import { CreatePresetDto, UpdatePresetDto } from './dto/rules.dto';
 import { RulePresetEntity } from './entities/rule-preset.entity';
 import { DEFAULT_RULES, RuleSet, legacyRules, normaliseRules, ruleProblems, rulesFor, rulesStageOf } from './rules';
 import { Outcome, SetScore, validateScore } from './score';
+import { circleRounds, computeStandings } from './standings';
 import { TYPE_TO_EVENT } from './dto/formats';
 import { EventEntity } from './entities/event.entity';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
@@ -666,11 +667,29 @@ export class TournamentsService {
     return this.matchesRepo.save(all as TournamentMatchEntity[]);
   }
 
+  /**
+   * Round robin (F-08): everyone in one group, matches in rounds by the circle
+   * method so nobody plays twice in a round (one sits out each round when the
+   * number is odd). Group rules apply.
+   */
   private async generateRoundRobin(ev: EventEntity, participants: ParticipantEntity[]) {
+    const players = ev.seeded ? this.ordered(participants, true) : this.shuffle(participants);
+    const [group] = await this.groupsRepo.save([this.groupsRepo.create({
+      tournamentId: ev.tournamentId, eventId: ev.id, name: 'Round robin', position: 0,
+      participantIds: players.map((p) => p.id),
+    })]);
+    for (const p of players) p.groupId = group.id;
+    await this.participantsRepo.save(players);
     const all: Partial<TournamentMatchEntity>[] = [];
-    for (let i = 0; i < participants.length; i++)
-      for (let j = i + 1; j < participants.length; j++)
-        all.push({ id: uuidv4(), tournamentId: ev.tournamentId, eventId: ev.id, stage: 'KNOCKOUT', round: 1, position: all.length, participant1Id: participants[i].id, participant2Id: participants[j].id, status: 'SCHEDULED' });
+    circleRounds(players.length).forEach((pairs, r) => {
+      for (const [a, b] of pairs) {
+        all.push({
+          id: uuidv4(), tournamentId: ev.tournamentId, eventId: ev.id, stage: 'GROUP', groupId: group.id,
+          round: r + 1, position: all.length,
+          participant1Id: players[a].id, participant2Id: players[b].id, status: 'SCHEDULED',
+        });
+      }
+    });
     return this.matchesRepo.save(all as TournamentMatchEntity[]);
   }
 
@@ -831,7 +850,10 @@ export class TournamentsService {
     }
 
     // ── A result: validate it completely before touching anything ──
-    if (t.status !== 'IN_PROGRESS') throw new BadRequestException('Results can only be recorded while the tournament is in progress');
+    const correctingFinished = t.status === 'COMPLETED' && wasCompleted;
+    if (t.status !== 'IN_PROGRESS' && !correctingFinished) {
+      throw new BadRequestException('Results can only be recorded while the tournament is in progress');
+    }
     if (match.status === 'BYE')
       throw new BadRequestException('A BYE match has no score to record');
     if (!match.participant1Id || !match.participant2Id)
@@ -906,6 +928,8 @@ export class TournamentsService {
       targetId: matchId, tournamentId, winnerId: dto.winnerId,
     });
 
+    await this.settleEvent(t, saved.eventId);
+
     const event = this.resultEvent(t, saved);
     if (previous) {
       // stats-service reverses the previous result and applies this one (B-18).
@@ -915,6 +939,55 @@ export class TournamentsService {
       this.notificationsClient.emit('match.completed', event);
     }
     return saved;
+  }
+
+  /**
+   * After a result: an event finishes when its last match is in (round
+   * robin, champion = top of the standings) or its final is (knockout,
+   * champion = the final's winner). A correction re-settles it. The
+   * tournament finishes when every event has (F-08, F-12).
+   */
+  private async settleEvent(t: TournamentEntity, eventId: string) {
+    const ev = (t.events ?? []).find((e) => e.id === eventId);
+    if (!ev || ev.status === 'CANCELLED') return;
+    const matches = await this.matchesRepo.find({ where: { eventId } });
+    const done = (m: TournamentMatchEntity) => m.status === 'COMPLETED' || m.status === 'WALKOVER' || m.status === 'BYE';
+    let champion: string | null = null;
+    if (ev.drawFormat === 'ROUND_ROBIN') {
+      if (matches.length && matches.every(done)) {
+        const entries = (t.participants ?? []).filter((p) => p.eventId === eventId && p.status === 'APPROVED').map((p) => p.id);
+        champion = computeStandings(entries, this.withRules(t, matches))[0]?.participantId ?? null;
+      }
+    } else {
+      const final = matches.find((m) => m.stage === 'KNOCKOUT' && !m.nextMatchId);
+      if (final && done(final) && final.winnerId) champion = final.winnerId;
+    }
+    const status = champion ? 'COMPLETED' : 'IN_PROGRESS';
+    if (ev.status === status && (ev.championEntryId ?? null) === champion) return;
+    ev.status = status as any;
+    ev.championEntryId = champion;
+    await this.eventsRepo.save(ev);
+    this.auditLogger.record({ actorId: null, action: champion ? 'EVENT_COMPLETED' : 'EVENT_REOPENED', targetId: eventId, champion });
+
+    const allDone = (t.events ?? []).every((e) => e.status === 'COMPLETED' || e.status === 'CANCELLED');
+    const tStatus = allDone ? 'COMPLETED' : 'IN_PROGRESS';
+    if (t.status !== tStatus) {
+      await this.tournamentsRepo.update(t.id, { status: tStatus });
+      t.status = tStatus;
+    }
+  }
+
+  /** Standings per group of an event (round robin: one group). */
+  async getStandings(tournamentId: string, eventId: string, actor?: Actor | null) {
+    const t = await this.findOne(tournamentId, actor);
+    const ev = this.eventOf(t, eventId);
+    const matches = this.withRules(t, await this.matchesRepo.find({ where: { eventId: ev.id, stage: 'GROUP' } }));
+    const groups = (t.groups ?? []).filter((g) => g.eventId === ev.id).sort((a, b) => a.position - b.position);
+    return groups.map((g) => ({
+      groupId: g.id,
+      name: g.name,
+      rows: computeStandings(g.participantIds, matches.filter((m) => m.groupId === g.id)),
+    }));
   }
 
   /** The payload of match.completed / match.corrected for a scored match. */

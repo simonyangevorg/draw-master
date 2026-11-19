@@ -16,6 +16,7 @@ export default function TournamentDetailPage() {
 
   const [tournament, setTournament]   = useState(null);
   const [allDraw, setDraw]            = useState([]);
+  const [standings, setStandings]     = useState({}); // eventId → groups with rows (F-08)
   const [activeTab, setActiveTab]     = useState("overview");
   const [loading, setLoading]         = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -41,6 +42,11 @@ export default function TournamentDetailPage() {
       const d = await dRes.json();
       setTournament(t);
       setDraw(Array.isArray(d) ? d : []);
+      // Group tables come from the server, the same standings that decide champions.
+      const grouped = (t.events ?? []).filter(e => e.drawFormat !== "SINGLE_ELIMINATION" && e.status !== "DRAFT" && e.status !== "OPEN");
+      const tables = await Promise.all(grouped.map(e =>
+        apiGet(`/api/tournaments/${id}/events/${e.id}/standings`).then(r => (r.ok ? r.json() : [])).catch(() => [])));
+      setStandings(Object.fromEntries(grouped.map((e, i) => [e.id, tables[i]])));
     } catch { setTournament(null); }
     finally  { setLoading(false); }
   }
@@ -124,6 +130,10 @@ export default function TournamentDetailPage() {
   // Once any match has a result, the draw can no longer be rearranged (B-19).
   const drawLocked = draw.some(m => m.status === "COMPLETED" || m.status === "WALKOVER");
   const deadline = tournament.registrationDeadline;
+  const championLabel = (pid) => {
+    const p = (tournament.participants ?? []).find(x => x.id === pid);
+    return p?.seed ? `Seed ${p.seed}` : pid ? pid.slice(0, 8) + "…" : "";
+  };
 
   // Current user's participation record (if any)
   const myParticipant = participants.find(p => p.playerId === user?.id);
@@ -215,6 +225,13 @@ export default function TournamentDetailPage() {
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* ── Champion (F-08 / F-12) ── */}
+        {event.status === "COMPLETED" && event.championEntryId && (
+          <div className="champion-banner" role="status">
+            🏆 {event.name} champion: <strong>{championLabel(event.championEntryId)}</strong>
           </div>
         )}
 
@@ -331,8 +348,10 @@ export default function TournamentDetailPage() {
                   <button className="btn btn-primary" onClick={() => setConfirmDraw(true)} disabled={actionLoading || confirmDraw}>Generate Draw</button>
                 )}
               </div>
-            ) : event.drawFormat === "GROUP_STAGE_KNOCKOUT" ? (
+            ) : event.drawFormat === "GROUP_STAGE_KNOCKOUT" || event.drawFormat === "ROUND_ROBIN" ? (
               <GroupStageView
+                roundRobin={event.drawFormat === "ROUND_ROBIN"}
+                standings={standings[event.id] ?? []}
                 tournament={{ ...tournament, ...event, groups: (tournament.groups ?? []).filter(g => g.eventId === event.id) }}
                 draw={draw}
                 participants={participants}

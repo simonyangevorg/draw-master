@@ -48,6 +48,10 @@ export class EventEntity {
   @Column({ type: 'varchar', default: 'DRAFT' })
   status: EventStatus;
 
+  /** The winning entry, once the event is complete (F-08/F-12). */
+  @Column({ type: 'varchar', nullable: true })
+  championEntryId: string | null;
+
   // ── Size and seeding ──
   @Column({ default: 32 })
   maxParticipants: number;
