@@ -42,6 +42,12 @@ export class TournamentMatchEntity {
   @Column({ nullable: true })
   nextMatchId: string;
 
+  // Which side of the next match the winner takes: 1 = participant1Id,
+  // 2 = participant2Id. Fixed by bracket position at draw time, never by
+  // "whichever slot is empty" (that put winners on the wrong side).
+  @Column({ type: 'int', nullable: true })
+  nextSlot: number;
+
   // Score: array of {p1, p2} per set e.g. [{p1:6,p2:3},{p1:7,p2:6}]
   @Column({ type: 'jsonb', nullable: true })
   sets: { p1: number; p2: number }[];

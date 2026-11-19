@@ -1,5 +1,5 @@
 import {
-  Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject,
+  Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException, Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -253,7 +253,7 @@ export class TournamentsService {
     for (const m of all) {
       if (m.round < rounds) {
         const next = all.find(n => n.round === m.round + 1 && n.position === Math.floor(m.position / 2));
-        if (next) m.nextMatchId = next.id;
+        if (next) { m.nextMatchId = next.id; m.nextSlot = m.position % 2 === 0 ? 1 : 2; }
       }
     }
 
@@ -280,8 +280,8 @@ export class TournamentsService {
           ? all.find(m => m.id === r1[i].nextMatchId)
           : null;
         if (nextMatch) {
-          if (r1[i].position % 2 === 0) nextMatch.participant1Id = r1[i].participant1Id;
-          else                           nextMatch.participant2Id = r1[i].participant1Id;
+          if (r1[i].nextSlot === 1) nextMatch.participant1Id = r1[i].participant1Id;
+          else                      nextMatch.participant2Id = r1[i].participant1Id;
         }
       }
     }
@@ -348,7 +348,7 @@ export class TournamentsService {
     for (const m of koAll) {
       if (m.round < koRounds) {
         const next = koAll.find(n => n.round === m.round + 1 && n.position === Math.floor(m.position / 2));
-        if (next) m.nextMatchId = next.id;
+        if (next) { m.nextMatchId = next.id; m.nextSlot = m.position % 2 === 0 ? 1 : 2; }
       }
     }
 
@@ -406,23 +406,65 @@ export class TournamentsService {
     if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
     const match = await this.matchesRepo.findOne({ where: { id: matchId, tournamentId } });
     if (!match) throw new NotFoundException('Match not found');
-    if (dto.sets) match.sets = dto.sets;
-    if (dto.status) match.status = dto.status as any;
-    if (dto.scheduledAt) match.scheduledAt = new Date(dto.scheduledAt);
 
+    const wasCompleted = match.status === 'COMPLETED';
+    const isResult = dto.winnerId !== undefined || dto.sets !== undefined || dto.status === 'COMPLETED';
+
+    // Scheduling or "now playing" changes carry no result.
+    if (!isResult) {
+      if (dto.status) {
+        if (wasCompleted || match.status === 'BYE' || match.status === 'WALKOVER')
+          throw new BadRequestException(`A ${match.status} match cannot be set to ${dto.status}`);
+        match.status = dto.status as any;
+      }
+      if (dto.scheduledAt) match.scheduledAt = new Date(dto.scheduledAt);
+      return this.matchesRepo.save(match);
+    }
+
+    // ── A result: validate it completely before touching anything ──
+    if (t.status !== 'IN_PROGRESS') throw new BadRequestException('Results can only be recorded while the tournament is in progress');
+    if (match.status === 'BYE' || match.status === 'WALKOVER')
+      throw new BadRequestException(`A ${match.status} match has no score to record`);
+    if (!match.participant1Id || !match.participant2Id)
+      throw new BadRequestException('Both players must be known before the match can be scored');
+    if (!dto.winnerId || !dto.sets?.length)
+      throw new BadRequestException('A result needs both the set scores and the winnerId');
+    if (dto.winnerId !== match.participant1Id && dto.winnerId !== match.participant2Id)
+      throw new BadRequestException('The winner must be one of the two players in this match');
+    let setsP1 = 0, setsP2 = 0;
+    for (const s of dto.sets) {
+      if (s.p1 === s.p2) throw new BadRequestException(`A set cannot end level (${s.p1}-${s.p2})`);
+      if (s.p1 > s.p2) setsP1++; else setsP2++;
+    }
+    const winnerIsP1 = dto.winnerId === match.participant1Id;
+    if ((winnerIsP1 ? setsP1 : setsP2) <= (winnerIsP1 ? setsP2 : setsP1))
+      throw new BadRequestException('The winner must have won more sets than the opponent');
+
+    const sets = dto.sets.map((s) => ({ p1: s.p1, p2: s.p2 }));
+    const previous = wasCompleted ? this.resultEvent(t, match) : null;
+    if (wasCompleted && match.winnerId === dto.winnerId && JSON.stringify(match.sets ?? []) === JSON.stringify(sets)) {
+      return match; // the same result re-submitted: nothing changes, nothing is emitted
+    }
+
+    // ── Advance (or, on a correction, re-advance) the winner ──
     let next: TournamentMatchEntity | null = null;
-    if (dto.winnerId) {
-      match.winnerId = dto.winnerId;
-      match.status = 'COMPLETED';
-      match.completedAt = new Date();
-      if (match.nextMatchId) {
-        next = await this.matchesRepo.findOne({ where: { id: match.nextMatchId } });
-        if (next) {
-          if (!next.participant1Id) next.participant1Id = dto.winnerId;
-          else next.participant2Id = dto.winnerId;
-        }
+    if (match.nextMatchId) {
+      next = await this.matchesRepo.findOne({ where: { id: match.nextMatchId, tournamentId } });
+      if (next) {
+        const winnerChanged = wasCompleted && match.winnerId !== dto.winnerId;
+        if (winnerChanged && (next.status === 'COMPLETED' || next.status === 'WALKOVER' || next.winnerId))
+          throw new ConflictException('The next-round match has already been played; correct that result first');
+        // Older draws have no nextSlot stored; the bracket position gives the same answer.
+        const slot = match.nextSlot ?? (match.position % 2 === 0 ? 1 : 2);
+        if (slot === 1) next.participant1Id = dto.winnerId;
+        else next.participant2Id = dto.winnerId;
       }
     }
+
+    match.sets = sets;
+    match.winnerId = dto.winnerId;
+    match.status = 'COMPLETED';
+    match.completedAt = new Date();
 
     // Match completion and next-round advancement must land together —
     // otherwise a mid-write failure leaves the match COMPLETED with its
@@ -442,42 +484,45 @@ export class TournamentsService {
       await queryRunner.release();
     }
 
-    if (dto.winnerId) {
-      this.auditLogger.record({
-        actorId: organiserId, action: 'MATCH_RESULT_RECORDED', targetId: matchId, tournamentId, winnerId: dto.winnerId,
-      });
-    }
+    this.auditLogger.record({
+      actorId: organiserId,
+      action: previous ? 'MATCH_RESULT_CORRECTED' : 'MATCH_RESULT_RECORDED',
+      targetId: matchId, tournamentId, winnerId: dto.winnerId,
+    });
 
-    // Publish match.completed event when a winner is recorded
-    if (dto.winnerId && saved.participant1Id && saved.participant2Id) {
-      const pMap = Object.fromEntries(t.participants.map((p: ParticipantEntity) => [p.id, p]));
-      const p1 = pMap[saved.participant1Id];
-      const p2 = pMap[saved.participant2Id];
-      const winner = pMap[saved.winnerId];
-      const loser = saved.winnerId === saved.participant1Id ? p2 : p1;
-
-      const event = {
-        matchId: saved.id,
-        tournamentId: t.id,
-        tournamentName: t.name,
-        surface: t.surface,
-        stage: saved.stage,
-        round: saved.round,
-        participant1Id: saved.participant1Id,
-        participant2Id: saved.participant2Id,
-        player1Id: p1?.playerId ?? saved.participant1Id,
-        player2Id: p2?.playerId ?? saved.participant2Id,
-        winnerId: saved.winnerId,
-        winnerPlayerId: winner?.playerId ?? saved.winnerId,
-        loserPlayerId: loser?.playerId ?? (saved.winnerId === saved.participant1Id ? saved.participant2Id : saved.participant1Id),
-        sets: saved.sets ?? [],
-      };
-
+    const event = this.resultEvent(t, saved);
+    if (previous) {
+      // stats-service reverses the previous result and applies this one (B-18).
+      this.statsClient.emit('match.corrected', { ...event, previous });
+    } else {
       this.statsClient.emit('match.completed', event);
       this.notificationsClient.emit('match.completed', event);
     }
-
     return saved;
+  }
+
+  /** The payload of match.completed / match.corrected for a scored match. */
+  private resultEvent(t: TournamentEntity, m: TournamentMatchEntity) {
+    const pMap = Object.fromEntries((t.participants ?? []).map((p: ParticipantEntity) => [p.id, p]));
+    const p1 = pMap[m.participant1Id];
+    const p2 = pMap[m.participant2Id];
+    const p1Won = m.winnerId === m.participant1Id;
+    return {
+      matchId: m.id,
+      tournamentId: t.id,
+      tournamentName: t.name,
+      surface: t.surface,
+      stage: m.stage,
+      round: m.round,
+      participant1Id: m.participant1Id,
+      participant2Id: m.participant2Id,
+      player1Id: p1?.playerId ?? m.participant1Id,
+      player2Id: p2?.playerId ?? m.participant2Id,
+      winnerId: m.winnerId,
+      winnerPlayerId: (p1Won ? p1 : p2)?.playerId ?? m.winnerId,
+      loserPlayerId: (p1Won ? p2 : p1)?.playerId ?? (p1Won ? m.participant2Id : m.participant1Id),
+      sets: m.sets ?? [],
+    };
   }
 
   health() { return { status: 'ok', service: 'tournament-service' }; }

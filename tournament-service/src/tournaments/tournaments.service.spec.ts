@@ -1,13 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { TournamentsService } from './tournaments.service';
 import { TournamentEntity } from './entities/tournament.entity';
 import { ParticipantEntity } from './entities/participant.entity';
 import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
 import { AuditLogger } from '../audit/audit-logger.service';
+import { UpdateMatchDto } from './dto/update-match.dto';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -862,9 +863,12 @@ describe('TournamentsService', () => {
   describe('updateMatch', () => {
     const p1 = makeParticipant({ id: 'part1', playerId: 'player1' });
     const p2 = makeParticipant({ id: 'part2', playerId: 'player2' });
+    const WIN_P1 = [{ p1: 6, p2: 3 }, { p1: 6, p2: 4 }];
+    const WIN_P2 = [{ p1: 3, p2: 6 }, { p1: 4, p2: 6 }];
 
-    const setupMatch = (matchOverrides: Partial<TournamentMatchEntity> = {}) => {
-      const tournament = makeTournament({ participants: [p1, p2] });
+    let next: any;
+    const setupMatch = (matchOverrides: Partial<TournamentMatchEntity> = {}, nextOverrides: any = {}, tOverrides: any = {}) => {
+      const tournament = makeTournament({ status: 'IN_PROGRESS', participants: [p1, p2], ...tOverrides });
       const match = Object.assign(
         {
           id: 'match-1',
@@ -876,90 +880,155 @@ describe('TournamentsService', () => {
           stage: 'KNOCKOUT',
           status: 'SCHEDULED',
           nextMatchId: 'match-next',
+          nextSlot: 1,
           sets: [],
           winnerId: null,
-          groupId: null,
-          slot1: null,
-          slot2: null,
-          scheduledAt: null,
           completedAt: null,
         } as unknown as TournamentMatchEntity,
         matchOverrides,
       );
+      next = { id: 'match-next', participant1Id: null, participant2Id: null, status: 'SCHEDULED', winnerId: null, ...nextOverrides };
 
       mockTournamentsRepo.findOne.mockResolvedValue(tournament);
       mockMatchesRepo.findOne.mockImplementation(async ({ where }) => {
         if (where.id === 'match-1') return match;
-        if (where.id === 'match-next') return { id: 'match-next', participant1Id: null, participant2Id: null };
+        if (where.id === 'match-next') return next;
         return null;
       });
       mockMatchesRepo.save.mockImplementation(async (m) => m);
-
       return { tournament, match };
     };
+    const score = (dto: any) => service.updateMatch('tournament-1', 'match-1', dto, 'organiser-1');
+    const savedNext = () => mockMatchesRepo.save.mock.calls.find((c) => c[0].id === 'match-next')?.[0];
 
-    it('updates sets and status without recording a winner', async () => {
+    it('sets the status without recording a result', async () => {
       setupMatch();
-
-      const result = await service.updateMatch(
-        'tournament-1',
-        'match-1',
-        { sets: [{ p1: 6, p2: 3 }], status: 'IN_PROGRESS' },
-        'organiser-1',
-      );
-
-      expect(result.sets).toEqual([{ p1: 6, p2: 3 }]);
+      const result = await score({ status: 'IN_PROGRESS' });
       expect(result.status).toBe('IN_PROGRESS');
+      expect(result.winnerId).toBeNull();
+      expect(mockStatsClient.emit).not.toHaveBeenCalled();
     });
 
-    it('sets status to COMPLETED and records completedAt when winnerId is provided', async () => {
+    it('records sets, winner, COMPLETED and completedAt', async () => {
       setupMatch();
-
-      const result = await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
-
+      const result = await score({ sets: WIN_P1, winnerId: 'part1' });
       expect(result.status).toBe('COMPLETED');
       expect(result.completedAt).toBeTruthy();
       expect(result.winnerId).toBe('part1');
+      expect(result.sets).toEqual(WIN_P1);
     });
 
-    it('advances winner to participant1Id of next match when that slot is empty', async () => {
+    // QA-6 (a): winner who is not in the match
+    it('rejects a winner who is not one of the two players', async () => {
       setupMatch();
-
-      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
-
-      const nextSave = mockMatchesRepo.save.mock.calls.find((c) => c[0].id === 'match-next')?.[0];
-      expect(nextSave.participant1Id).toBe('part1');
+      await expect(score({ sets: WIN_P1, winnerId: 'stranger' })).rejects.toThrow(BadRequestException);
+      expect(mockMatchesRepo.save).not.toHaveBeenCalled();
     });
 
-    it('advances winner to participant2Id of next match when participant1Id is already taken', async () => {
-      const tournament = makeTournament({ participants: [p1, p2] });
-      const match = {
-        id: 'match-1', tournamentId: 'tournament-1',
-        participant1Id: 'part1', participant2Id: 'part2',
-        round: 1, position: 0, stage: 'KNOCKOUT', status: 'SCHEDULED',
-        nextMatchId: 'match-next', sets: [], winnerId: null,
-      } as unknown as TournamentMatchEntity;
+    // QA-6 (b): scoring a match whose players aren't known yet
+    it('rejects scoring a TBD match', async () => {
+      setupMatch({ participant2Id: null });
+      await expect(score({ sets: WIN_P1, winnerId: 'part1' })).rejects.toThrow(BadRequestException);
+    });
 
-      mockTournamentsRepo.findOne.mockResolvedValue(tournament);
-      mockMatchesRepo.findOne.mockImplementation(async ({ where }) => {
-        if (where.id === 'match-1') return match;
-        if (where.id === 'match-next') return { id: 'match-next', participant1Id: 'part-other', participant2Id: null };
-        return null;
-      });
-      mockMatchesRepo.save.mockImplementation(async (m) => m);
+    // QA-6 (c): the loser picked as winner
+    it('rejects a winner who won fewer sets', async () => {
+      setupMatch();
+      await expect(score({ sets: WIN_P2, winnerId: 'part1' })).rejects.toThrow('more sets');
+    });
 
-      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
+    it('rejects a level set', async () => {
+      setupMatch();
+      await expect(score({ sets: [{ p1: 6, p2: 6 }], winnerId: 'part1' })).rejects.toThrow(BadRequestException);
+    });
 
-      const nextSave = mockMatchesRepo.save.mock.calls.find((c) => c[0].id === 'match-next')?.[0];
-      expect(nextSave.participant2Id).toBe('part1');
+    it('rejects a winner without set scores', async () => {
+      setupMatch();
+      await expect(score({ winnerId: 'part1' })).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects scoring a BYE', async () => {
+      setupMatch({ status: 'BYE', participant2Id: null });
+      await expect(score({ sets: WIN_P1, winnerId: 'part1' })).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects results unless the tournament is IN_PROGRESS', async () => {
+      setupMatch({}, {}, { status: 'OPEN' });
+      await expect(score({ sets: WIN_P1, winnerId: 'part1' })).rejects.toThrow(BadRequestException);
+    });
+
+    // QA-6 (d): status is an enum — enforced by UpdateMatchDto
+    it('the DTO rejects a free-text status and malformed sets', async () => {
+      const { plainToInstance } = await import('class-transformer');
+      const { validate } = await import('class-validator');
+      const bad = plainToInstance(UpdateMatchDto, { status: 'BANANA', sets: [{ p1: 'abc', p2: -1 }] });
+      const errors = await validate(bad);
+      expect(errors.map((e) => e.property).sort()).toEqual(['sets', 'status']);
+    });
+
+    // QA-7: the winner goes to their bracket side, not the first empty slot
+    it('advances the winner of an odd-position match into slot 2 even when slot 1 is empty', async () => {
+      setupMatch({ position: 1, nextSlot: 2 });
+      await score({ sets: WIN_P1, winnerId: 'part1' });
+      expect(savedNext().participant2Id).toBe('part1');
+      expect(savedNext().participant1Id).toBeNull();
+    });
+
+    it('advances the winner of an even-position match into slot 1', async () => {
+      setupMatch({}, { participant2Id: 'part-other' });
+      await score({ sets: WIN_P1, winnerId: 'part1' });
+      expect(savedNext().participant1Id).toBe('part1');
+      expect(savedNext().participant2Id).toBe('part-other');
+    });
+
+    it('falls back to the bracket position for draws made before nextSlot existed', async () => {
+      setupMatch({ position: 3, nextSlot: null });
+      await score({ sets: WIN_P1, winnerId: 'part1' });
+      expect(savedNext().participant2Id).toBe('part1');
+    });
+
+    it('a corrected winner replaces the earlier winner in the next match', async () => {
+      setupMatch({ status: 'COMPLETED', winnerId: 'part1', sets: WIN_P1 }, { participant1Id: 'part1' });
+      await score({ sets: WIN_P2, winnerId: 'part2' });
+      expect(savedNext().participant1Id).toBe('part2');
+    });
+
+    it('refuses to change the winner once the next match has been played (409)', async () => {
+      setupMatch({ status: 'COMPLETED', winnerId: 'part1', sets: WIN_P1 },
+        { participant1Id: 'part1', participant2Id: 'x', status: 'COMPLETED', winnerId: 'x' });
+      await expect(score({ sets: WIN_P2, winnerId: 'part2' })).rejects.toThrow(ConflictException);
+      expect(mockMatchesRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('allows correcting only the set scores after the next match has been played', async () => {
+      setupMatch({ status: 'COMPLETED', winnerId: 'part1', sets: WIN_P1 },
+        { participant1Id: 'part1', participant2Id: 'x', status: 'COMPLETED', winnerId: 'x' });
+      const result = await score({ sets: [{ p1: 7, p2: 5 }, { p1: 6, p2: 0 }], winnerId: 'part1' });
+      expect(result.sets).toEqual([{ p1: 7, p2: 5 }, { p1: 6, p2: 0 }]);
+    });
+
+    it('emits nothing when the same result is submitted again', async () => {
+      setupMatch({ status: 'COMPLETED', winnerId: 'part1', sets: WIN_P1 }, { participant1Id: 'part1' });
+      await score({ sets: WIN_P1, winnerId: 'part1' });
+      expect(mockStatsClient.emit).not.toHaveBeenCalled();
+      expect(mockNotificationsClient.emit).not.toHaveBeenCalled();
+      expect(mockMatchesRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('emits match.corrected (with the previous result) instead of a second match.completed', async () => {
+      setupMatch({ status: 'COMPLETED', winnerId: 'part1', sets: WIN_P1 }, { participant1Id: 'part1' });
+      await score({ sets: WIN_P2, winnerId: 'part2' });
+      expect(mockStatsClient.emit).toHaveBeenCalledTimes(1);
+      expect(mockStatsClient.emit).toHaveBeenCalledWith('match.corrected', expect.objectContaining({
+        winnerPlayerId: 'player2',
+        previous: expect.objectContaining({ winnerPlayerId: 'player1', sets: WIN_P1 }),
+      }));
+      expect(mockNotificationsClient.emit).not.toHaveBeenCalled();
     });
 
     it('runs both saves inside a single transaction', async () => {
       setupMatch();
-
-      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
-
-      expect(mockDataSource.createQueryRunner).toHaveBeenCalled();
+      await score({ sets: WIN_P1, winnerId: 'part1' });
       expect(mockQueryRunner.startTransaction).toHaveBeenCalled();
       expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
       expect(mockQueryRunner.rollbackTransaction).not.toHaveBeenCalled();
@@ -969,77 +1038,34 @@ describe('TournamentsService', () => {
     it('rolls back and does not advance the winner if the second save fails', async () => {
       setupMatch();
       mockQueryRunner.manager.save = jest.fn()
-        .mockResolvedValueOnce({ id: 'match-1' }) // match save succeeds
-        .mockRejectedValueOnce(new Error('db exploded')); // next-match save fails
-
-      await expect(
-        service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1'),
-      ).rejects.toThrow('db exploded');
-
+        .mockResolvedValueOnce({ id: 'match-1' })
+        .mockRejectedValueOnce(new Error('db exploded'));
+      await expect(score({ sets: WIN_P1, winnerId: 'part1' })).rejects.toThrow('db exploded');
       expect(mockQueryRunner.rollbackTransaction).toHaveBeenCalled();
       expect(mockQueryRunner.commitTransaction).not.toHaveBeenCalled();
       expect(mockQueryRunner.release).toHaveBeenCalled();
     });
 
-    it('emits match.completed to both stats and notifications clients', async () => {
+    it('emits match.completed with player IDs (not participant IDs) to stats and notifications', async () => {
       setupMatch();
-
-      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
-
-      expect(mockStatsClient.emit).toHaveBeenCalledWith(
-        'match.completed',
-        expect.objectContaining({ matchId: 'match-1', tournamentId: 'tournament-1', winnerId: 'part1' }),
-      );
-      expect(mockNotificationsClient.emit).toHaveBeenCalledWith('match.completed', expect.any(Object));
-    });
-
-    it('does NOT emit match.completed for a BYE (participant2Id is null)', async () => {
-      const tournament = makeTournament({ participants: [p1] });
-      const match = {
-        id: 'match-1', tournamentId: 'tournament-1',
-        participant1Id: 'part1', participant2Id: null,
-        stage: 'KNOCKOUT', status: 'BYE', nextMatchId: null, sets: [], winnerId: null,
-      } as unknown as TournamentMatchEntity;
-
-      mockTournamentsRepo.findOne.mockResolvedValue(tournament);
-      mockMatchesRepo.findOne.mockResolvedValue(match);
-      mockMatchesRepo.save.mockImplementation(async (m) => m);
-
-      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
-
-      expect(mockStatsClient.emit).not.toHaveBeenCalled();
-      expect(mockNotificationsClient.emit).not.toHaveBeenCalled();
-    });
-
-    it('includes correct player IDs (not participant IDs) in the emitted event', async () => {
-      setupMatch();
-
-      await service.updateMatch('tournament-1', 'match-1', { winnerId: 'part1' }, 'organiser-1');
-
-      expect(mockStatsClient.emit).toHaveBeenCalledWith(
-        'match.completed',
-        expect.objectContaining({
-          player1Id: 'player1',
-          player2Id: 'player2',
-          winnerPlayerId: 'player1',
-          loserPlayerId: 'player2',
-        }),
-      );
+      await score({ sets: WIN_P1, winnerId: 'part1' });
+      const expected = expect.objectContaining({
+        matchId: 'match-1', tournamentId: 'tournament-1', winnerId: 'part1',
+        player1Id: 'player1', player2Id: 'player2', winnerPlayerId: 'player1', loserPlayerId: 'player2',
+      });
+      expect(mockStatsClient.emit).toHaveBeenCalledWith('match.completed', expected);
+      expect(mockNotificationsClient.emit).toHaveBeenCalledWith('match.completed', expected);
     });
 
     it('throws ForbiddenException for non-organiser', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
-
       await expect(service.updateMatch('tournament-1', 'match-1', {}, 'other')).rejects.toThrow(ForbiddenException);
     });
 
     it('throws NotFoundException when match does not exist', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockMatchesRepo.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.updateMatch('tournament-1', 'missing', {}, 'organiser-1'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.updateMatch('tournament-1', 'missing', {}, 'organiser-1')).rejects.toThrow(NotFoundException);
     });
   });
 });
