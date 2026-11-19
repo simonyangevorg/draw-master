@@ -1,0 +1,79 @@
+{
+  "_comment": "F-06: shared score fixtures. tournament-service (score.spec.ts) and the frontend (scripts/check-score-rules.mjs) both run every case. winner: 1|2 for COMPLETED, null otherwise. error: a substring of the expected message.",
+  "rules": {
+    "B3":    { "bestOf": 3, "gamesPerSet": 6, "tiebreakAt": 6, "decidingSet": "FULL", "noAd": false },
+    "MTB":   { "bestOf": 3, "gamesPerSet": 6, "tiebreakAt": 6, "decidingSet": "MATCH_TIEBREAK_10", "noAd": false },
+    "ONE":   { "bestOf": 1, "gamesPerSet": 6, "tiebreakAt": 6, "decidingSet": "FULL", "noAd": false },
+    "SHORT": { "bestOf": 3, "gamesPerSet": 4, "tiebreakAt": 4, "decidingSet": "MATCH_TIEBREAK_10", "noAd": true },
+    "PRO":   { "bestOf": 1, "gamesPerSet": 8, "tiebreakAt": 8, "decidingSet": "FULL", "noAd": false },
+    "B5":    { "bestOf": 5, "gamesPerSet": 6, "tiebreakAt": 6, "decidingSet": "FULL", "noAd": false }
+  },
+  "cases": [
+    { "rules": "B3", "sets": [[6,3],[6,4]], "ok": true, "winner": 1 },
+    { "rules": "B3", "sets": [[3,6],[4,6]], "ok": true, "winner": 2 },
+    { "rules": "B3", "sets": [[6,3],[4,6],[7,5]], "ok": true, "winner": 1 },
+    { "rules": "B3", "sets": [[7,6,5],[6,7,3],[6,0]], "ok": true, "winner": 1 },
+    { "rules": "B3", "sets": [[6,0],[0,6],[6,7,8]], "ok": true, "winner": 2 },
+    { "rules": "B3", "sets": [[7,5],[7,5]], "ok": true, "winner": 1 },
+    { "rules": "B3", "sets": [[6,5],[6,3]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "B3", "sets": [[8,6],[6,3]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "B3", "sets": [[6,6],[6,3]], "ok": false, "error": "can't end level" },
+    { "rules": "B3", "sets": [[6,3]], "ok": false, "error": "isn't finished" },
+    { "rules": "B3", "sets": [[6,3],[6,4],[6,2]], "ok": false, "error": "already over" },
+    { "rules": "B3", "sets": [[6,3],[6,4,5]], "ok": false, "error": "no tiebreak" },
+    { "rules": "B3", "sets": [[6,3],[4,6],[10,8]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "B3", "sets": [[7,4],[6,3]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "B3", "sets": [], "ok": false, "error": "isn't finished" },
+
+    { "rules": "MTB", "sets": [[6,4],[3,6],[10,8]], "ok": true, "winner": 1 },
+    { "rules": "MTB", "sets": [[6,4],[3,6],[12,10]], "ok": true, "winner": 1 },
+    { "rules": "MTB", "sets": [[4,6],[7,6,4],[7,10]], "ok": true, "winner": 2 },
+    { "rules": "MTB", "sets": [[6,2],[6,1]], "ok": true, "winner": 1 },
+    { "rules": "MTB", "sets": [[6,4],[3,6],[10,9]], "ok": false, "error": "2-point lead" },
+    { "rules": "MTB", "sets": [[6,4],[3,6],[9,7]], "ok": false, "error": "played to 10" },
+    { "rules": "MTB", "sets": [[6,4],[3,6],[13,10]], "ok": false, "error": "leads by 2" },
+    { "rules": "MTB", "sets": [[6,4],[3,6],[6,3]], "ok": false, "error": "played to 10" },
+    { "rules": "MTB", "sets": [[6,4],[3,6],[10,8,4]], "ok": false, "error": "no separate tiebreak points" },
+
+    { "rules": "ONE", "sets": [[6,2]], "ok": true, "winner": 1 },
+    { "rules": "ONE", "sets": [[7,6,3]], "ok": true, "winner": 1 },
+    { "rules": "ONE", "sets": [[5,7]], "ok": true, "winner": 2 },
+    { "rules": "ONE", "sets": [[6,2],[6,3]], "ok": false, "error": "at most 1 sets" },
+    { "rules": "ONE", "sets": [[10,8]], "ok": false, "error": "isn't a finished set" },
+
+    { "rules": "SHORT", "sets": [[4,2],[4,1]], "ok": true, "winner": 1 },
+    { "rules": "SHORT", "sets": [[5,4,6],[2,4],[10,5]], "ok": true, "winner": 1 },
+    { "rules": "SHORT", "sets": [[4,3],[4,1]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "SHORT", "sets": [[6,4],[4,1]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "SHORT", "sets": [[5,3],[4,1]], "ok": true, "winner": 1 },
+
+    { "rules": "PRO", "sets": [[8,5]], "ok": true, "winner": 1 },
+    { "rules": "PRO", "sets": [[9,8,4]], "ok": true, "winner": 1 },
+    { "rules": "PRO", "sets": [[9,7]], "ok": true, "winner": 1 },
+    { "rules": "PRO", "sets": [[6,3]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "PRO", "sets": [[8,7]], "ok": false, "error": "isn't a finished set" },
+
+    { "rules": "B5", "sets": [[6,3],[6,4],[6,2]], "ok": true, "winner": 1 },
+    { "rules": "B5", "sets": [[6,3],[4,6],[6,4],[3,6],[7,5]], "ok": true, "winner": 1 },
+    { "rules": "B5", "sets": [[6,3],[6,4]], "ok": false, "error": "isn't finished" },
+
+    { "rules": "B3", "outcome": "RETIRED", "sets": [[6,3],[2,1]], "ok": true, "winner": null },
+    { "rules": "B3", "outcome": "RETIRED", "sets": [[6,3],[4,6],[0,0]], "ok": true, "winner": null },
+    { "rules": "B3", "outcome": "RETIRED", "sets": [], "ok": false, "error": "walkover" },
+    { "rules": "B3", "outcome": "RETIRED", "sets": [[6,3],[6,4]], "ok": false, "error": "already a finished match" },
+    { "rules": "B3", "outcome": "RETIRED", "sets": [[6,5],[2,1]], "ok": false, "error": "isn't a finished set" },
+    { "rules": "B3", "outcome": "RETIRED", "sets": [[6,3],[9,1]], "ok": false, "error": "more games than a set can" },
+    { "rules": "MTB", "outcome": "RETIRED", "sets": [[6,4],[3,6],[7,5]], "ok": true, "winner": null },
+    { "rules": "B3", "outcome": "WALKOVER", "sets": [], "ok": true, "winner": null },
+    { "rules": "B3", "outcome": "WALKOVER", "sets": [[6,0]], "ok": false, "error": "has no score" },
+    { "rules": "B3", "outcome": "DEFAULT", "sets": [], "ok": true, "winner": null },
+    { "rules": "B3", "outcome": "DEFAULT", "sets": [[6,3],[1,0]], "ok": true, "winner": null },
+    { "rules": "B3", "outcome": "DEFAULT", "sets": [[6,3],[6,3]], "ok": false, "error": "already a finished match" }
+  ],
+  "formats": [
+    { "sets": [[7,6,5],[4,6],[10,8,null,true]], "outcome": "COMPLETED", "text": "7-6(5) 4-6 [10-8]" },
+    { "sets": [[6,3],[2,1]], "outcome": "RETIRED", "text": "6-3 2-1 ret." },
+    { "sets": [], "outcome": "WALKOVER", "text": "w/o" },
+    { "sets": [], "outcome": "DEFAULT", "text": "def." }
+  ]
+}

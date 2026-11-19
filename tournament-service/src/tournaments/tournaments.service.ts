@@ -16,6 +16,7 @@ import { CreateEventDto, UpdateEventDto, EVENT_FORMAT_FIELDS, EVENT_RULE_FIELDS 
 import { CreatePresetDto, UpdatePresetDto } from './dto/rules.dto';
 import { RulePresetEntity } from './entities/rule-preset.entity';
 import { DEFAULT_RULES, RuleSet, legacyRules, normaliseRules, ruleProblems, rulesFor, rulesStageOf } from './rules';
+import { Outcome, SetScore, validateScore } from './score';
 import { TYPE_TO_EVENT } from './dto/formats';
 import { EventEntity } from './entities/event.entity';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
@@ -814,8 +815,9 @@ export class TournamentsService {
     const match = await this.matchesRepo.findOne({ where: { id: matchId, tournamentId } });
     if (!match) throw new NotFoundException('Match not found');
 
-    const wasCompleted = match.status === 'COMPLETED';
-    const isResult = dto.winnerId !== undefined || dto.sets !== undefined || dto.status === 'COMPLETED';
+    // A walkover is a result too, and can be corrected like one (F-06).
+    const wasCompleted = match.status === 'COMPLETED' || match.status === 'WALKOVER';
+    const isResult = dto.winnerId !== undefined || dto.sets !== undefined || dto.status === 'COMPLETED' || dto.outcome !== undefined;
 
     // Scheduling or "now playing" changes carry no result.
     if (!isResult) {
@@ -830,26 +832,32 @@ export class TournamentsService {
 
     // ── A result: validate it completely before touching anything ──
     if (t.status !== 'IN_PROGRESS') throw new BadRequestException('Results can only be recorded while the tournament is in progress');
-    if (match.status === 'BYE' || match.status === 'WALKOVER')
-      throw new BadRequestException(`A ${match.status} match has no score to record`);
+    if (match.status === 'BYE')
+      throw new BadRequestException('A BYE match has no score to record');
     if (!match.participant1Id || !match.participant2Id)
       throw new BadRequestException('Both players must be known before the match can be scored');
-    if (!dto.winnerId || !dto.sets?.length)
-      throw new BadRequestException('A result needs both the set scores and the winnerId');
+    if (!dto.winnerId) throw new BadRequestException('Say who won (winnerId)');
     if (dto.winnerId !== match.participant1Id && dto.winnerId !== match.participant2Id)
       throw new BadRequestException('The winner must be one of the two players in this match');
-    let setsP1 = 0, setsP2 = 0;
-    for (const s of dto.sets) {
-      if (s.p1 === s.p2) throw new BadRequestException(`A set cannot end level (${s.p1}-${s.p2})`);
-      if (s.p1 > s.p2) setsP1++; else setsP2++;
-    }
-    const winnerIsP1 = dto.winnerId === match.participant1Id;
-    if ((winnerIsP1 ? setsP1 : setsP2) <= (winnerIsP1 ? setsP2 : setsP1))
-      throw new BadRequestException('The winner must have won more sets than the opponent');
 
-    const sets = dto.sets.map((s) => ({ p1: s.p1, p2: s.p2 }));
+    // F-06: the score must be possible under this match's rules (its stage's
+    // rules, or the final's override). Retirement and default may end a set
+    // early; a walkover has no score.
+    const matchEvent = (t.events ?? []).find((e) => e.id === match.eventId);
+    const rules = matchEvent ? rulesFor(matchEvent, match) : DEFAULT_RULES;
+    const outcome: Outcome = (dto.outcome as Outcome) ?? 'COMPLETED';
+    const check = validateScore(rules, (dto.sets ?? []) as SetScore[], outcome);
+    if (!check.ok) throw new BadRequestException(check.error);
+    const winnerIsP1 = dto.winnerId === match.participant1Id;
+    if (check.winner && (check.winner === 1) !== winnerIsP1)
+      throw new BadRequestException('The scores say the other player won: the winner must have won more sets than the opponent');
+
+    const sets = check.sets.map((s) => ({
+      p1: s.p1, p2: s.p2, ...(s.tb != null ? { tb: s.tb } : {}), ...(s.isMatchTiebreak ? { isMatchTiebreak: true } : {}),
+    }));
     const previous = wasCompleted ? this.resultEvent(t, match) : null;
-    if (wasCompleted && match.winnerId === dto.winnerId && JSON.stringify(match.sets ?? []) === JSON.stringify(sets)) {
+    if (wasCompleted && match.winnerId === dto.winnerId && (match.outcome ?? 'COMPLETED') === outcome
+      && JSON.stringify(match.sets ?? []) === JSON.stringify(sets)) {
       return match; // the same result re-submitted: nothing changes, nothing is emitted
     }
 
@@ -870,7 +878,8 @@ export class TournamentsService {
 
     match.sets = sets;
     match.winnerId = dto.winnerId;
-    match.status = 'COMPLETED';
+    match.outcome = outcome;
+    match.status = outcome === 'WALKOVER' ? 'WALKOVER' : 'COMPLETED';
     match.completedAt = new Date();
 
     // Match completion and next-round advancement must land together —
@@ -931,6 +940,7 @@ export class TournamentsService {
       winnerPlayerId: (p1Won ? p1 : p2)?.playerId ?? m.winnerId,
       loserPlayerId: (p1Won ? p2 : p1)?.playerId ?? (p1Won ? m.participant2Id : m.participant1Id),
       sets: m.sets ?? [],
+      outcome: m.outcome ?? 'COMPLETED',
     };
   }
 

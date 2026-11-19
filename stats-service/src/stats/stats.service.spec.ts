@@ -273,3 +273,40 @@ describe('StatsService', () => {
     });
   });
 });
+
+describe('walkovers (F-06)', () => {
+  it('a walkover changes no stats, and correcting it to a played result counts it', async () => {
+    const stats: Record<string, any> = {};
+    const fresh = (id: string) => ({ playerId: id, matchesPlayed: 0, wins: 0, losses: 0, setsWon: 0, setsLost: 0, surfaceWins: { clay: 0, grass: 0, hard: 0 }, tournamentWins: 0 });
+    let processed: any = null;
+    const statsRepo = { findOne: jest.fn(async ({ where }) => (stats[where.playerId] ??= fresh(where.playerId))), create: jest.fn((d) => d), save: jest.fn(async (x) => x) };
+    const h2hRepo = { findOne: jest.fn(async () => null), create: jest.fn((d) => ({ ...d })), save: jest.fn(async (x) => x) };
+    const processedRepo = { findOne: jest.fn(async () => processed), create: jest.fn((d) => d), save: jest.fn(async (e) => (processed = e)) };
+    const { Test } = await import('@nestjs/testing');
+    const { getRepositoryToken } = await import('@nestjs/typeorm');
+    const { DataSource } = await import('typeorm');
+    const { PlayerStatsEntity } = await import('./entities/player-stats.entity');
+    const { H2HEntity } = await import('./entities/h2h.entity');
+    const { ProcessedEventEntity } = await import('./entities/processed-event.entity');
+    const repos = (e: any) => (e === PlayerStatsEntity ? statsRepo : e === H2HEntity ? h2hRepo : processedRepo);
+    const module = await Test.createTestingModule({
+      providers: [
+        StatsService,
+        { provide: getRepositoryToken(PlayerStatsEntity), useValue: statsRepo },
+        { provide: getRepositoryToken(H2HEntity), useValue: h2hRepo },
+        { provide: getRepositoryToken(ProcessedEventEntity), useValue: processedRepo },
+        { provide: DataSource, useValue: { transaction: async (work: any) => work({ getRepository: repos }) } },
+      ],
+    }).compile();
+    const svc = module.get(StatsService);
+    const base = { matchId: 'm', tournamentId: 't', player1Id: 'a', player2Id: 'b', winnerId: 'a' };
+
+    await svc.recordResult({ ...base, sets: [], outcome: 'WALKOVER' } as any);
+    expect(stats.a).toBeUndefined();
+    expect(processed.payload.outcome).toBe('WALKOVER');
+
+    await svc.correctResult({ ...base, sets: [{ p1: 6, p2: 1 }, { p1: 6, p2: 2 }], outcome: 'COMPLETED' } as any);
+    expect(stats.a).toMatchObject({ matchesPlayed: 1, wins: 1, setsWon: 2 });
+    expect(stats.b).toMatchObject({ matchesPlayed: 1, losses: 1 });
+  });
+});

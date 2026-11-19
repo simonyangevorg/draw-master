@@ -27,4 +27,8 @@ export class MatchResultDto {
   @IsOptional()
   @IsString()
   surface?: string; // clay | grass | hard
+
+  @IsOptional()
+  @IsString()
+  outcome?: string; // COMPLETED | RETIRED | WALKOVER | DEFAULT
 }

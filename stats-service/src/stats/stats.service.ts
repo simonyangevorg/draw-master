@@ -47,11 +47,13 @@ const toApplied = (dto: MatchResultDto): AppliedResult => ({
   winnerId: dto.winnerId,
   sets: (dto.sets ?? []).map((s) => ({ p1: s.p1, p2: s.p2 })),
   surface: dto.surface,
+  outcome: dto.outcome ?? 'COMPLETED',
 });
 
 const sameResult = (a: AppliedResult, b: AppliedResult) =>
   a.player1Id === b.player1Id && a.player2Id === b.player2Id && a.winnerId === b.winnerId &&
-  (a.surface ?? '') === (b.surface ?? '') && JSON.stringify(a.sets) === JSON.stringify(b.sets);
+  (a.surface ?? '') === (b.surface ?? '') && (a.outcome ?? 'COMPLETED') === (b.outcome ?? 'COMPLETED') &&
+  JSON.stringify(a.sets) === JSON.stringify(b.sets);
 
 /** A correction: the new result, plus the previous one as the publisher saw it. */
 export type MatchCorrection = MatchResultDto & { previous?: MatchResultDto };
@@ -91,6 +93,8 @@ export class StatsService {
 
   /** Adds a result to the aggregates (sign 1) or takes it back out (sign -1). */
   private async apply(r: AppliedResult, sign: 1 | -1, repos: Repos) {
+    // A walkover is not a match played: it counts for nobody's record (F-06).
+    if (r.outcome === 'WALKOVER') return;
     const loserId = r.winnerId === r.player1Id ? r.player2Id : r.player1Id;
 
     const p1Stats = await this.getOrCreateStats(r.player1Id, repos.stats);

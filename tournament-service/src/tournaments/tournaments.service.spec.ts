@@ -1538,6 +1538,66 @@ describe('TournamentsService', () => {
     });
   });
 
+  describe('score entry under the match rules (F-06)', () => {
+    const p1 = makeParticipant({ id: 'part1', playerId: 'player1' });
+    const p2 = makeParticipant({ id: 'part2', playerId: 'player2' });
+    const ONE_SET = { bestOf: 1, gamesPerSet: 6, tiebreakAt: 6, decidingSet: 'FULL', noAd: false };
+    const MTB = { bestOf: 3, gamesPerSet: 6, tiebreakAt: 6, decidingSet: 'MATCH_TIEBREAK_10', noAd: false };
+    const setup = (matchOver: any = {}) => {
+      const t = makeTournament({
+        status: 'IN_PROGRESS', participants: [p1, p2],
+        events: [{ id: 'event-1', drawFormat: 'SINGLE_ELIMINATION', status: 'IN_PROGRESS', groupRules: MTB, knockoutRules: MTB, finalRules: ONE_SET }],
+      } as any);
+      const match: any = { id: 'm', tournamentId: 'tournament-1', eventId: 'event-1', stage: 'KNOCKOUT', round: 1, position: 0,
+        participant1Id: 'part1', participant2Id: 'part2', status: 'SCHEDULED', nextMatchId: 'next', nextSlot: 1, winnerId: null, sets: [], ...matchOver };
+      mockTournamentsRepo.findOne.mockResolvedValue(t);
+      mockMatchesRepo.findOne.mockImplementation(async ({ where }) => (where.id === 'm' ? match : { id: 'next', status: 'SCHEDULED' }));
+      mockMatchesRepo.save.mockImplementation(async (x) => x);
+      return match;
+    };
+    const score = (dto: any) => service.updateMatch('tournament-1', 'm', dto, actor('organiser-1'));
+
+    it('refuses a set that cannot happen (6-5)', async () => {
+      setup();
+      await expect(score({ winnerId: 'part1', sets: [{ p1: 6, p2: 5 }, { p1: 6, p2: 3 }] })).rejects.toThrow("isn't a finished set");
+    });
+
+    it('stores a 10-point match tiebreak, flagged, and the tiebreak points of a 7-6 set', async () => {
+      setup();
+      const m: any = await score({ winnerId: 'part1', sets: [{ p1: 7, p2: 6, tb: 5 }, { p1: 4, p2: 6 }, { p1: 10, p2: 8 }] });
+      expect(m.sets).toEqual([{ p1: 7, p2: 6, tb: 5 }, { p1: 4, p2: 6 }, { p1: 10, p2: 8, isMatchTiebreak: true }]);
+      expect(m.outcome).toBe('COMPLETED');
+    });
+
+    it('the final plays under its own override (one set here)', async () => {
+      setup({ nextMatchId: null });
+      await expect(score({ winnerId: 'part1', sets: [{ p1: 6, p2: 2 }] })).resolves.toMatchObject({ status: 'COMPLETED' });
+      setup({ nextMatchId: 'next' });
+      await expect(score({ winnerId: 'part1', sets: [{ p1: 6, p2: 2 }] })).rejects.toThrow("isn't finished");
+    });
+
+    it('a retirement keeps the score so far and advances the named winner', async () => {
+      setup();
+      const m: any = await score({ winnerId: 'part2', outcome: 'RETIRED', sets: [{ p1: 6, p2: 3 }, { p1: 1, p2: 2 }] });
+      expect(m).toMatchObject({ status: 'COMPLETED', outcome: 'RETIRED', winnerId: 'part2' });
+      expect(mockStatsClient.emit).toHaveBeenCalledWith('match.completed', expect.objectContaining({ outcome: 'RETIRED' }));
+    });
+
+    it('a walkover has no score and is stored as WALKOVER', async () => {
+      setup();
+      const m: any = await score({ winnerId: 'part1', outcome: 'WALKOVER' });
+      expect(m).toMatchObject({ status: 'WALKOVER', outcome: 'WALKOVER', sets: [] });
+      await expect(score({ winnerId: 'part1', outcome: 'WALKOVER', sets: [{ p1: 6, p2: 0 }] })).rejects.toThrow('has no score');
+    });
+
+    it('a walkover can later be corrected to a played result', async () => {
+      setup({ status: 'WALKOVER', outcome: 'WALKOVER', winnerId: 'part1', sets: [] });
+      const m: any = await score({ winnerId: 'part1', sets: [{ p1: 6, p2: 1 }, { p1: 6, p2: 1 }] });
+      expect(m).toMatchObject({ status: 'COMPLETED', outcome: 'COMPLETED' });
+      expect(mockStatsClient.emit).toHaveBeenCalledWith('match.corrected', expect.objectContaining({ previous: expect.objectContaining({ outcome: 'WALKOVER' }) }));
+    });
+  });
+
   // ── UPDATE MATCH ───────────────────────────────────────────────────────────
 
   describe('updateMatch', () => {

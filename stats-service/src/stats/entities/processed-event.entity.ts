@@ -7,6 +7,8 @@ export interface AppliedResult {
   winnerId: string;        // a player ID
   sets: { p1: number; p2: number }[];
   surface?: string;
+  /** COMPLETED, RETIRED, WALKOVER or DEFAULT (F-06); walkovers change no aggregates. */
+  outcome?: string;
 }
 
 /**

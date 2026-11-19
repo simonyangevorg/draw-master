@@ -53,9 +53,13 @@ export class TournamentMatchEntity {
   @Column({ type: 'int', nullable: true })
   nextSlot: number;
 
-  // Score: array of {p1, p2} per set e.g. [{p1:6,p2:3},{p1:7,p2:6}]
+  // Score per set: {p1, p2, tb? (loser's tiebreak points), isMatchTiebreak?} (F-06)
   @Column({ type: 'jsonb', nullable: true })
-  sets: { p1: number; p2: number }[];
+  sets: { p1: number; p2: number; tb?: number; isMatchTiebreak?: boolean }[];
+
+  /** How it ended: COMPLETED, RETIRED, WALKOVER or DEFAULT (F-06). Null before a result. */
+  @Column({ type: 'varchar', nullable: true })
+  outcome: string | null;
 
   @Column({ type: 'varchar', default: 'SCHEDULED' })
   status: MatchStatus;

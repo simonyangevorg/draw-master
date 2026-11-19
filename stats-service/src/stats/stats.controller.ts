@@ -13,6 +13,7 @@ const toResult = (event: any): MatchResultDto => ({
   sets: event.sets ?? [],
   surface: (event.surface ?? '').toLowerCase(),
   tournamentId: event.tournamentId,
+  outcome: event.outcome ?? 'COMPLETED',
 });
 
 @Controller()
