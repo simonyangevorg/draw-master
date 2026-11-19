@@ -178,7 +178,8 @@ From Sprint 2 nobody "is an organiser" any more: the super-admin opens clubs and
 2. **Deploy** (section 2).
 3. **Sign in** as the super-admin. If the account was just created, the site asks you to choose a new password first.
 4. **Open the clubs.** Go to *Manage clubs* → *Open a club* (FPTC first), then on the club's page search for each admin by name or email and choose *Make admin*. An admin sees *New Tournament* the next time their session refreshes (at most 15 minutes, or straight away when they reload the page).
-5. Tournaments that existed before clubs have no club yet. Whoever created them still manages them; L-07 (Sprint 5) moves them into FPTC.
+5. **Everyone signs in once more** after this deploy: sessions now use stored, single-use refresh tokens (L-17), and the old ones are no longer accepted. Expected, not a fault.
+6. Tournaments that existed before clubs have no club yet. Whoever created them still manages them; L-07 (Sprint 5) moves them into FPTC.
 
 ---
 
