@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { apiGet, apiPost, apiPatch } from "../api";
+import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
 import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL } from "../constants";
 import Sidebar from "../components/Sidebar";
 
@@ -10,6 +10,7 @@ export default function TournamentsPage() {
   const [tournaments, setTournaments] = useState([]);
   const [participations, setParticipations] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -20,7 +21,7 @@ export default function TournamentsPage() {
         setTournaments(Array.isArray(ts) ? ts : []);
         if (Array.isArray(ps)) {
           const map = {};
-          ps.forEach(p => { map[p.tournamentId] = { participantId: p.id, status: p.status }; });
+          ps.forEach(p => { map[p.tournamentId] = { participantId: p.participantId, status: p.status }; });
           setParticipations(map);
         }
       })
@@ -31,17 +32,23 @@ export default function TournamentsPage() {
   async function handleApply(tournamentId, e) {
     e.preventDefault();
     const res = await apiPost(`/api/tournaments/${tournamentId}/participants`, { playerId: user.id });
+    setError("");
     if (res.ok) {
       const p = await res.json();
       setParticipations(prev => ({ ...prev, [tournamentId]: { participantId: p.id, status: p.status } }));
+    } else {
+      setError(await errorMessage(res, "Could not apply to this tournament"));
     }
   }
 
   async function handleWithdraw(tournamentId, participantId, e) {
     e.preventDefault();
     const res = await apiPatch(`/api/tournaments/${tournamentId}/participants/${participantId}/withdraw`);
+    setError("");
     if (res.ok) {
       setParticipations(prev => ({ ...prev, [tournamentId]: { ...prev[tournamentId], status: "WITHDRAWN" } }));
+    } else {
+      setError(await errorMessage(res, "Could not withdraw"));
     }
   }
 
@@ -60,6 +67,8 @@ export default function TournamentsPage() {
             </Link>
           )}
         </div>
+
+        {error && <div className="alert alert-error" role="alert">{error}</div>}
 
         <section className="dash-section">
           {loading ? (

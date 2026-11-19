@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE_URL } from "../config";
+import { errorMessage } from "../api";
 
 const AuthContext = createContext(null);
 
@@ -35,8 +36,7 @@ export function AuthProvider({ children }) {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || "Invalid credentials");
+      throw new Error(await errorMessage(res, "Invalid credentials"));
     }
 
     const data = await res.json();
@@ -61,8 +61,7 @@ export function AuthProvider({ children }) {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || "Registration failed");
+      throw new Error(await errorMessage(res, "Registration failed"));
     }
 
     const data = await res.json();

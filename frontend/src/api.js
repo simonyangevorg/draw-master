@@ -88,6 +88,20 @@ export async function apiFetch(path, options = {}) {
   return res;
 }
 
+export const TOO_MANY_ATTEMPTS = "Too many attempts, try again in a minute.";
+
+/**
+ * A readable message for a failed response. Rate limiting (429) always gets
+ * the same plain sentence, never the server's "ThrottlerException" (B-15);
+ * validation errors, which arrive as an array, are joined into one line.
+ */
+export async function errorMessage(res, fallback) {
+  if (res.status === 429) return TOO_MANY_ATTEMPTS;
+  const body = await res.json().catch(() => ({}));
+  const msg = Array.isArray(body.message) ? body.message.join(". ") : body.message;
+  return typeof msg === "string" && msg ? msg : fallback;
+}
+
 export async function apiGet(path) {
   return apiFetch(path);
 }

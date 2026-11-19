@@ -1,10 +1,15 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Logo from "../components/Logo";
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Back to the page that asked them to sign in, else the dashboard (B-20).
+  const from = location.state?.from;
+  const destination = from?.pathname && from.pathname !== "/login" ? from.pathname + (from.search ?? "") : "/dashboard";
 
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
@@ -24,7 +29,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(form.email, form.password);
-      navigate("/");
+      navigate(destination, { replace: true });
     } catch (err) {
       setError(err.message || "Login failed. Please try again.");
     } finally {
@@ -37,7 +42,7 @@ export default function LoginPage() {
       <div className="login-left" aria-hidden="true">
         <div className="login-brand">
           <Link to="/">
-            <img src="/logo.png" alt="FPTC" className="login-logo-img" />
+            <Logo size={52} light className="dm-logo-login" />
           </Link>
           <p className="login-brand-tagline">
             Your all-in-one platform for professional tennis tournament management.
@@ -104,7 +109,7 @@ export default function LoginPage() {
 
           <p className="login-footer-text">
             Don't have an account?{" "}
-            <Link to="/register" className="form-link">
+            <Link to="/register" state={location.state} className="form-link">
               Create one
             </Link>
           </p>

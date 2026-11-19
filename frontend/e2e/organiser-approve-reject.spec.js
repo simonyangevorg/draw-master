@@ -4,7 +4,7 @@ import { ORGANISER_EMAIL, ORGANISER_PASSWORD } from './global-setup.js';
 
 async function createApprovalRequiredTournament(page, name) {
   await page.goto('/tournaments/new');
-  await page.getByPlaceholder('e.g. FPTC Summer Open 2026').fill(name);
+  await page.getByPlaceholder('e.g. Summer Club Open 2026').fill(name);
   await page.locator('input[name="startDate"]').fill('2027-02-01');
   await page.locator('input[name="endDate"]').fill('2027-02-05');
   await page.getByRole('button', { name: /Continue/ }).click();

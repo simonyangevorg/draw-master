@@ -1,27 +1,28 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Logo from "../components/Logo";
 
 const FEATURES = [
   {
     icon: "🏆",
-    title: "Tournaments",
-    desc: "Create and manage tournaments with full bracket generation and scheduling.",
+    title: "Tournaments & entries",
+    desc: "Create a tournament, open entries, and approve players online. No spreadsheets.",
   },
   {
     icon: "🎾",
-    title: "Player Profiles",
-    desc: "Track rankings, stats, and match history for every registered player.",
+    title: "Three draw formats",
+    desc: "Single elimination, round robin, or groups followed by a knockout, with seeding.",
   },
   {
-    icon: "📊",
-    title: "Live Stats",
-    desc: "Real-time match scores, leaderboards, and performance analytics.",
+    icon: "📋",
+    title: "Live draws",
+    desc: "Enter a score and the winner moves straight into the next round for everyone to see.",
   },
   {
-    icon: "🔔",
-    title: "Notifications",
-    desc: "Stay updated with instant alerts for match results and schedule changes.",
+    icon: "📱",
+    title: "Works on your phone",
+    desc: "Run the draw from courtside: every page works on a phone as well as a laptop.",
   },
 ];
 
@@ -34,7 +35,7 @@ export default function LandingPage() {
       <nav className="navbar">
         <div className="navbar-inner">
           <Link to="/" className="navbar-logo">
-            <img src="/logo.png" alt="FPTC" className="logo-img" />
+            <Logo size={36} />
           </Link>
           <div className="navbar-links">
             <a href="#features">Features</a>
@@ -117,9 +118,9 @@ export default function LandingPage() {
       {/* ── CTA Banner ── */}
       <section className="cta-banner" id="about">
         <div className="section-inner cta-inner">
-          <img src="/logo.png" alt="FPTC" className="cta-logo" />
+          <Logo size={56} light className="dm-logo-cta" />
           <h2>Ready to serve?</h2>
-          <p>Join tournaments already running on FPTC.</p>
+          <p>Enter your club's next tournament and follow it live on DrawMaster.</p>
           {!isAuthenticated && (
             <Link to="/login" className="btn btn-white btn-lg">
               Create your account
@@ -131,8 +132,8 @@ export default function LandingPage() {
       {/* ── Footer ── */}
       <footer className="footer">
         <div className="section-inner footer-inner">
-          <img src="/logo.png" alt="FPTC" className="logo-img" />
-          <span className="footer-copy">© {new Date().getFullYear()} F*ck Pushers Tennis Club. All rights reserved.</span>
+          <Logo size={36} />
+          <span className="footer-copy">© {new Date().getFullYear()} DrawMaster. All rights reserved.</span>
         </div>
       </footer>
     </div>

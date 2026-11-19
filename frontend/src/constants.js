@@ -24,3 +24,44 @@ export const SURFACE_LABEL = {
   ARTIFICIAL_CLAY:  "Artificial Clay",
   ARTIFICIAL_GRASS: "Artificial Grass",
 };
+
+export const FORMAT_LABEL = {
+  SINGLE_ELIMINATION:   "Single Elimination",
+  DOUBLE_ELIMINATION:   "Double Elimination",
+  ROUND_ROBIN:          "Round Robin",
+  GROUP_STAGE_KNOCKOUT: "Groups + Knockout",
+};
+
+export const AGE_GROUP_LABEL = {
+  OPEN:      "Open",
+  U18:       "Under 18",
+  U16:       "Under 16",
+  U14:       "Under 14",
+  SENIOR_40: "Seniors 40+",
+};
+
+export const ENTRY_STATUS_LABEL = {
+  PENDING:   "Pending",
+  APPROVED:  "Approved",
+  REJECTED:  "Rejected",
+  WITHDRAWN: "Withdrawn",
+};
+
+export const ROLE_LABEL = {
+  ORGANISER: "Organiser",
+  MEMBER:    "Member",
+  GUEST:     "Guest",
+};
+
+/**
+ * Not available yet: the API refuses them until doubles pairs (F-04) and
+ * Double Elimination (F-10) ship, so the wizard doesn't offer them (B-17).
+ */
+export const UNAVAILABLE_TYPES   = ["DOUBLES_MEN", "DOUBLES_WOMEN", "MIXED_DOUBLES"];
+export const UNAVAILABLE_FORMATS = ["DOUBLE_ELIMINATION"];
+
+/** A human label for an enum value: never show the raw value (B-20). */
+export function label(map, value) {
+  if (value == null || value === "") return "—";
+  return map[value] ?? String(value).toLowerCase().replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
+}

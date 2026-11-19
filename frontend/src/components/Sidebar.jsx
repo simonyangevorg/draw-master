@@ -1,6 +1,8 @@
 import React from "react";
 import { NavLink, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Logo from "./Logo";
+import { ROLE_LABEL, label } from "../constants";
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
@@ -12,7 +14,7 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <Link to="/" className="sidebar-logo">
-        <img src="/logo.png" alt="FPTC" className="sidebar-logo-img" />
+        <Logo size={30} />
       </Link>
       <nav className="sidebar-nav">
         <NavLink to="/dashboard" end className={linkClass}>
@@ -35,7 +37,7 @@ export default function Sidebar() {
           <div className="sidebar-avatar">{user?.name?.[0]?.toUpperCase()}</div>
           <div>
             <div className="sidebar-user-name">{user?.name}</div>
-            <div className="sidebar-user-role">{user?.role}</div>
+            <div className="sidebar-user-role">{label(ROLE_LABEL, user?.role)}</div>
           </div>
         </div>
         <button

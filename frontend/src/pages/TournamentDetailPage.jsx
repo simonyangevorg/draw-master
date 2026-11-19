@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { apiGet, apiPost, apiPatch } from "../api";
+import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
 import BracketView from "../components/BracketView";
 import GroupStageView from "../components/GroupStageView";
-import { STATUS_BADGE, SURFACE_LABEL } from "../constants";
+import Sidebar from "../components/Sidebar";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, label } from "../constants";
 
 export default function TournamentDetailPage() {
   const { id } = useParams();
@@ -18,6 +19,7 @@ export default function TournamentDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [msg, setMsg]                 = useState({ text: "", error: false });
   const [confirmWithdrawId, setConfirmWithdrawId] = useState(null);
+  const [confirmDraw, setConfirmDraw] = useState(false);
 
   const isOrganiser = tournament?.organiserId === user?.id;
 
@@ -49,11 +51,12 @@ export default function TournamentDetailPage() {
   }
 
   async function generateDraw() {
+    setConfirmDraw(false);
     setActionLoading(true);
     setMsg({ text: "" });
     const res = await apiPost(`/api/tournaments/${id}/draw`);
     if (res.ok) { await loadTournament(); flash("Draw generated successfully!"); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Could not generate draw", true); }
+    else { flash(await errorMessage(res, "Could not generate draw"), true); }
     setActionLoading(false);
   }
 
@@ -61,7 +64,7 @@ export default function TournamentDetailPage() {
     setActionLoading(true);
     const res = await apiPost(`/api/tournaments/${id}/participants`, { playerId: user.id });
     if (res.ok) { await loadTournament(); flash("Application submitted successfully!"); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed to apply", true); }
+    else { flash(await errorMessage(res, "Failed to apply"), true); }
     setActionLoading(false);
   }
 
@@ -74,31 +77,31 @@ export default function TournamentDetailPage() {
     setConfirmWithdrawId(null);
     const res = await apiPatch(`/api/tournaments/${id}/participants/${pid}/withdraw`);
     if (res.ok) { await loadTournament(); flash("Participant withdrawn."); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed to withdraw", true); }
+    else { flash(await errorMessage(res, "Failed to withdraw"), true); }
   }
 
   async function approveParticipant(pid) {
     const res = await apiPatch(`/api/tournaments/${id}/participants/${pid}/approve`);
     if (res.ok) { await loadTournament(); flash("Participant approved."); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed to approve", true); }
+    else { flash(await errorMessage(res, "Failed to approve"), true); }
   }
 
   async function rejectParticipant(pid) {
     const res = await apiPatch(`/api/tournaments/${id}/participants/${pid}/reject`);
     if (res.ok) { await loadTournament(); flash("Participant rejected."); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed to reject", true); }
+    else { flash(await errorMessage(res, "Failed to reject"), true); }
   }
 
   async function swapInDraw(pid1, pid2) {
     const res = await apiPost(`/api/tournaments/${id}/draw/swap`, { participantId1: pid1, participantId2: pid2 });
     if (res.ok) { const d = await res.json(); setDraw(Array.isArray(d) ? d : []); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Swap failed", true); }
+    else { flash(await errorMessage(res, "Swap failed"), true); }
   }
 
   async function scoreMatch(matchId, sets, winnerId) {
     const res = await apiPatch(`/api/tournaments/${id}/matches/${matchId}`, { sets, winnerId });
     if (res.ok) { await loadTournament(); flash("Score saved — winner advanced."); }
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed to save score", true); }
+    else { flash(await errorMessage(res, "Failed to save score"), true); }
   }
 
   if (loading) return <div className="page-loading">Loading tournament…</div>;
@@ -106,6 +109,12 @@ export default function TournamentDetailPage() {
 
   const badge = STATUS_BADGE[tournament.status] ?? STATUS_BADGE.DRAFT;
   const participants = tournament.participants ?? [];
+  const approvedCount = participants.filter(p => p.status === "APPROVED").length;
+  const pendingEntries = participants.filter(p => p.status === "PENDING");
+  const entryCount = `${approvedCount}/${tournament.maxParticipants}${pendingEntries.length ? ` · ${pendingEntries.length} pending` : ""}`;
+  // Once any match has a result, the draw can no longer be rearranged (B-19).
+  const drawLocked = draw.some(m => m.status === "COMPLETED" || m.status === "WALKOVER");
+  const deadline = tournament.registrationDeadline;
 
   // Current user's participation record (if any)
   const myParticipant = participants.find(p => p.playerId === user?.id);
@@ -117,18 +126,7 @@ export default function TournamentDetailPage() {
 
   return (
     <div className="dash-layout">
-      <aside className="sidebar">
-        <Link to="/" className="sidebar-logo">
-          <img src="/logo.png" alt="FPTC" className="sidebar-logo-img" />
-        </Link>
-        <nav className="sidebar-nav">
-          <Link to="/dashboard" className="sidebar-link"><span>🏠</span> Dashboard</Link>
-          {user?.role === "ORGANISER" && (
-            <Link to="/tournaments/new" className="sidebar-link"><span>➕</span> New Tournament</Link>
-          )}
-          <Link to="/tournaments" className="sidebar-link"><span>🏆</span> Tournaments</Link>
-        </nav>
-      </aside>
+      <Sidebar />
 
       <main className="dash-main">
         {/* Header */}
@@ -143,7 +141,8 @@ export default function TournamentDetailPage() {
               {tournament.city && <span>📍 {tournament.city}</span>}
               <span>🎾 {SURFACE_LABEL[tournament.surface] ?? tournament.surface}</span>
               <span>📅 {tournament.startDate} → {tournament.endDate}</span>
-              <span>👥 {participants.length}/{tournament.maxParticipants}</span>
+              <span>👥 {entryCount}</span>
+              {deadline && tournament.status === "OPEN" && <span>⏳ Entries close {deadline}</span>}
             </div>
           </div>
 
@@ -153,7 +152,7 @@ export default function TournamentDetailPage() {
                 <button className="btn btn-primary" onClick={openRegistration} disabled={actionLoading}>Open Registration</button>
               )}
               {tournament.status === "OPEN" && (
-                <button className="btn btn-primary" onClick={generateDraw} disabled={actionLoading}>Generate Draw</button>
+                <button className="btn btn-primary" onClick={() => setConfirmDraw(true)} disabled={actionLoading || confirmDraw}>Generate Draw</button>
               )}
             </div>
           )}
@@ -162,6 +161,25 @@ export default function TournamentDetailPage() {
 
         {msg.text && (
           <div className={`alert ${msg.error ? "alert-error" : "alert-success"}`}>{msg.text}</div>
+        )}
+
+        {confirmDraw && (
+          <div className="alert alert-info confirm-banner" role="alertdialog" aria-label="Confirm draw generation">
+            <div>
+              <strong>Generate the draw with {approvedCount} approved player{approvedCount === 1 ? "" : "s"}?</strong>
+              {" "}Entries, approvals and seeds are locked afterwards.
+              {pendingEntries.length > 0 && (
+                <div className="confirm-banner-note">
+                  {pendingEntries.length} pending application{pendingEntries.length > 1 ? "s" : ""} will be left out
+                  {": "}{pendingEntries.map(p => p.playerId.slice(0, 8) + "…").join(", ")}. Approve them first to include them.
+                </div>
+              )}
+            </div>
+            <div className="confirm-banner-actions">
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDraw(false)}>Cancel</button>
+              <button className="btn btn-primary btn-sm" onClick={generateDraw} disabled={actionLoading}>Generate draw</button>
+            </div>
+          </div>
         )}
 
         {confirmWithdrawId && (
@@ -224,11 +242,12 @@ export default function TournamentDetailPage() {
             <div className="detail-card">
               <h3>Tournament Details</h3>
               <dl className="detail-list">
-                <dt>Type</dt><dd>{tournament.tournamentType?.replace(/_/g, " ")}</dd>
-                <dt>Format</dt><dd>{tournament.drawFormat?.replace(/_/g, " ")}</dd>
-                <dt>Surface</dt><dd>{tournament.surface}</dd>
-                <dt>Age Group</dt><dd>{tournament.ageGroup}</dd>
-                <dt>Participants</dt><dd>{participants.length} / {tournament.maxParticipants}</dd>
+                <dt>Type</dt><dd>{label(TYPE_LABEL, tournament.tournamentType)}</dd>
+                <dt>Format</dt><dd>{label(FORMAT_LABEL, tournament.drawFormat)}</dd>
+                <dt>Surface</dt><dd>{label(SURFACE_LABEL, tournament.surface)}</dd>
+                <dt>Age Group</dt><dd>{label(AGE_GROUP_LABEL, tournament.ageGroup)}</dd>
+                <dt>Entries</dt><dd>{entryCount}</dd>
+                <dt>Entries close</dt><dd>{deadline || "When the draw is made"}</dd>
                 {tournament.venue && <><dt>Venue</dt><dd>{tournament.venue}</dd></>}
                 {tournament.description && <><dt>Description</dt><dd>{tournament.description}</dd></>}
               </dl>
@@ -278,7 +297,7 @@ export default function TournamentDetailPage() {
                 <div className="dash-empty-icon">🎾</div>
                 <p>{tournament.status === "OPEN" && isOrganiser ? "Draw not generated yet." : "Draw not available yet."}</p>
                 {tournament.status === "OPEN" && isOrganiser && (
-                  <button className="btn btn-primary" onClick={generateDraw} disabled={actionLoading}>Generate Draw</button>
+                  <button className="btn btn-primary" onClick={() => setConfirmDraw(true)} disabled={actionLoading || confirmDraw}>Generate Draw</button>
                 )}
               </div>
             ) : tournament.drawFormat === "GROUP_STAGE_KNOCKOUT" ? (
@@ -295,6 +314,7 @@ export default function TournamentDetailPage() {
                 participants={participants}
                 pool={drawPool}
                 isOrganiser={isOrganiser}
+                drawLocked={drawLocked}
                 tournamentId={id}
                 setsToWin={tournament.setsToWin ?? 2}
                 onSwap={swapInDraw}
@@ -361,7 +381,7 @@ function ParticipantsPanel({ participants, isOrganiser, currentUserId, tournamen
                 <td>{p.seed ?? "—"}</td>
                 <td>
                   <span className="t-badge" style={{ background: STATUS_COLOR[p.status] ?? "#6b7280" }}>
-                    {p.status}
+                    {label(ENTRY_STATUS_LABEL, p.status)}
                   </span>
                 </td>
                 <td>
@@ -390,7 +410,7 @@ function ParticipantsPanel({ participants, isOrganiser, currentUserId, tournamen
 }
 
 // ── Draw manager (bracket + drag/drop + pool) ─────────────────────────────────
-function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, setsToWin, onSwap, onScore, onReload, flash }) {
+function DrawManager({ draw, participants, pool, isOrganiser, drawLocked, tournamentId, setsToWin, onSwap, onScore, onReload, flash }) {
   const pMap = Object.fromEntries(participants.map(p => [p.id, p]));
   const dragSource = useRef(null);
   const [poolOver, setPoolOver]     = useState(false);
@@ -409,7 +429,7 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
   async function patchSlot(matchId, slot, participantId) {
     const res = await apiPatch(`/api/tournaments/${tournamentId}/draw/${matchId}/slot`, { slot, participantId: participantId ?? null });
     if (res.ok) onReload();
-    else { const e = await res.json().catch(() => ({})); flash(e.message || "Failed", true); }
+    else { flash(await errorMessage(res, "Failed"), true); }
   }
 
   async function setBye(matchId, slot) {
@@ -483,8 +503,11 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
 
   return (
     <div className="draw-manager">
-      {/* Pool sidebar — always shown to organiser */}
-      {isOrganiser && (
+      {isOrganiser && drawLocked && (
+        <div className="draw-locked-note">The draw is locked now that results are in. Players can no longer be moved.</div>
+      )}
+      {/* Pool sidebar — shown to the organiser until the first result locks the draw */}
+      {isOrganiser && !drawLocked && (
         <div
           className={`draw-pool${poolOver ? " draw-pool-over" : ""}`}
           onDragOver={e => { e.preventDefault(); setPoolOver(true); }}
@@ -522,6 +545,7 @@ function DrawManager({ draw, participants, pool, isOrganiser, tournamentId, sets
           draw={draw}
           pMap={pMap}
           isOrganiser={isOrganiser}
+          drawLocked={drawLocked}
           dragSource={dragSource}
           onDropOnSlot={handleDropOnSlot}
           onSetBye={setBye}
@@ -572,7 +596,7 @@ function matchTop(ri, mi) {
 }
 function matchCenter(ri, mi) { return matchTop(ri, mi) + CARD_H / 2; }
 
-function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, onSetBye, selected, onTapPick, onTapDrop, onCardClick, playerLabel }) {
+function DraggableBracket({ draw, pMap, isOrganiser, drawLocked, dragSource, onDropOnSlot, onSetBye, selected, onTapPick, onTapDrop, onCardClick, playerLabel }) {
   const rounds = [...new Set(draw.map(m => m.round))].sort((a, b) => a - b);
   if (!rounds.length) return null;
 
@@ -650,9 +674,9 @@ function DraggableBracket({ draw, pMap, isOrganiser, dragSource, onDropOnSlot, o
               const key        = `${match.id}-${slot}`;
               const isOver     = dragOver === key;
               const isByeSlot  = isBye && slot === "participant2Id";
-              const canEdit    = isOrganiser && !isDone && feederResolved(match, slot, ri);
+              const canEdit    = isOrganiser && !drawLocked && !isDone && feederResolved(match, slot, ri);
               // Only lock EMPTY slots — if a player is already placed, slot is not locked
-              const isLocked   = isOrganiser && !isDone && !pid && !feederResolved(match, slot, ri);
+              const isLocked   = isOrganiser && !drawLocked && !isDone && !pid && !feederResolved(match, slot, ri);
               const label      = pid
                 ? playerLabel(pid)
                 : isByeSlot ? "BYE"

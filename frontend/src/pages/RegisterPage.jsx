@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Logo from "../components/Logo";
 
 const ROLES = [
   {
@@ -20,6 +21,7 @@ const ROLES = [
 export default function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [step, setStep] = useState(1); // 1 = pick role, 2 = fill details
   const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "", role: "", clubId: "" });
@@ -53,7 +55,9 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await register(form);
-      navigate("/");
+      // New accounts land on the dashboard, or where they were heading (B-20).
+      const from = location.state?.from;
+      navigate(from?.pathname ? from.pathname + (from.search ?? "") : "/dashboard", { replace: true });
     } catch (err) {
       setError(err.message || "Registration failed. Please try again.");
     } finally {
@@ -69,10 +73,10 @@ export default function RegisterPage() {
       <div className="login-left" aria-hidden="true">
         <div className="login-brand">
           <Link to="/">
-            <img src="/logo.png" alt="FPTC" className="login-logo-img" />
+            <Logo size={52} light className="dm-logo-login" />
           </Link>
           <p className="login-brand-tagline">
-            Join the F*ck Pushers Tennis Club platform. Manage tournaments, track matches, and compete.
+            Join DrawMaster to enter your club's tournaments, follow the draw and see every result.
           </p>
         </div>
         <div className="login-court-bg" />

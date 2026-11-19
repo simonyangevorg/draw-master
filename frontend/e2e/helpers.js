@@ -6,8 +6,8 @@ export async function registerMember(page, { name, email, password }) {
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByLabel('Confirm password').fill(password);
   await page.getByRole('button', { name: 'Create account' }).click();
-  await page.waitForURL((url) => url.pathname === '/');
-  await page.goto('/dashboard');
+  // Sign-in and sign-up land on the dashboard (B-20).
+  await page.waitForURL((url) => url.pathname === '/dashboard');
 }
 
 export async function login(page, email, password) {
@@ -15,8 +15,8 @@ export async function login(page, email, password) {
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await page.waitForURL((url) => url.pathname === '/');
-  await page.goto('/dashboard');
+  // Sign-in and sign-up land on the dashboard (B-20).
+  await page.waitForURL((url) => url.pathname === '/dashboard');
 }
 
 export function uniqueEmail(prefix) {

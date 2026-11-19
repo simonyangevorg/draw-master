@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { apiGet } from "../api";
-import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL } from "../constants";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, ROLE_LABEL, label } from "../constants";
 import Sidebar from "../components/Sidebar";
 
 export default function ProfilePage() {
@@ -75,7 +75,7 @@ export default function ProfilePage() {
                   padding: ".2rem .75rem", borderRadius: 999,
                   fontSize: ".75rem", fontWeight: 700,
                 }}>
-                  {user?.role}
+                  {label(ROLE_LABEL, user?.role)}
                 </span>
               </div>
             </div>

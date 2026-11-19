@@ -29,6 +29,18 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: npm test
 
+  # L-09: the product is DrawMaster. A club's name belongs in its data, never
+  # in the app's own chrome or copy.
+  brand-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No old brand in the frontend
+        run: |
+          if grep -rniE "pushers|fptc" frontend/src frontend/index.html; then
+            echo "Old brand name found in the frontend (see above)" && exit 1
+          fi
+
   # L-01: the schema is owned by migrations. Build a fresh DB from them and fail
   # if the entities describe anything the migrations don't (a forgotten
   # migration:generate after an entity change).

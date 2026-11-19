@@ -1,9 +1,19 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { apiPost } from "../api";
+import { apiPost, errorMessage } from "../api";
+import Sidebar from "../components/Sidebar";
+import { TYPE_LABEL, FORMAT_LABEL, SURFACE_LABEL, UNAVAILABLE_TYPES, UNAVAILABLE_FORMATS, label } from "../constants";
 
 const STEPS = ["Basic Info", "Format", "Match Rules", "Settings"];
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+/** Players a Group + Knockout draw needs: every group >= 3 and > the number advancing (B-10). */
+const groupMinimum = (groups, advance) => Number(groups) * Math.max(3, Number(advance) + 1);
+
+/** A sensible group count for the entry size: groups of about 4. */
+const suggestedGroups = (max) => (Number(max) <= 8 ? 2 : Number(max) <= 16 ? 4 : 8);
 
 const INITIAL = {
   // Step 1
@@ -48,9 +58,30 @@ export default function CreateTournamentPage() {
 
   function validateStep() {
     if (step === 0) {
-      if (!form.name) { setError("Tournament name is required."); return false; }
+      if (!form.name.trim()) { setError("Tournament name is required."); return false; }
+      if (form.name.trim().length > 100) { setError("Keep the name under 100 characters."); return false; }
       if (!form.startDate || !form.endDate) { setError("Start and end dates are required."); return false; }
-      if (form.endDate < form.startDate) { setError("End date must be after start date."); return false; }
+      if (form.startDate < today()) { setError("The start date can't be in the past."); return false; }
+      if (form.endDate < form.startDate) { setError("End date must be on or after the start date."); return false; }
+      if (form.registrationDeadline && form.registrationDeadline > form.startDate) {
+        setError("Registration must close on or before the start date."); return false;
+      }
+    }
+    if (step === 1) {
+      if (Number(form.minParticipants) > Number(form.maxParticipants)) {
+        setError("Min participants can't be more than max participants."); return false;
+      }
+      if (form.drawFormat === "GROUP_STAGE_KNOCKOUT") {
+        const need = groupMinimum(form.numberOfGroups, form.advancePerGroup);
+        if (need > Number(form.maxParticipants)) {
+          setError(`${form.numberOfGroups} groups sending ${form.advancePerGroup} through need at least ${need} players, more than the maximum of ${form.maxParticipants}. Use fewer groups.`);
+          return false;
+        }
+        if (Number(form.minParticipants) < need) {
+          setError(`${form.numberOfGroups} groups sending ${form.advancePerGroup} through need at least ${need} players: set Min Participants to ${need} or more.`);
+          return false;
+        }
+      }
     }
     setError("");
     return true;
@@ -79,8 +110,7 @@ export default function CreateTournamentPage() {
       const res = await apiPost("/api/tournaments/", payload);
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(Array.isArray(err.message) ? err.message.join(", ") : err.message || "Failed to create tournament");
+        throw new Error(await errorMessage(res, "Failed to create tournament"));
       }
 
       const created = await res.json();
@@ -94,17 +124,7 @@ export default function CreateTournamentPage() {
 
   return (
     <div className="dash-layout">
-      {/* Sidebar */}
-      <aside className="sidebar">
-        <Link to="/" className="sidebar-logo">
-          <img src="/logo.png" alt="FPTC" className="sidebar-logo-img" />
-        </Link>
-        <nav className="sidebar-nav">
-          <Link to="/dashboard" className="sidebar-link"><span>🏠</span> Dashboard</Link>
-          <Link to="/tournaments/new" className="sidebar-link sidebar-link-active"><span>➕</span> New Tournament</Link>
-          <Link to="/tournaments" className="sidebar-link"><span>🏆</span> Tournaments</Link>
-        </nav>
-      </aside>
+      <Sidebar />
 
       <main className="dash-main">
         <div className="dash-header">
@@ -134,7 +154,7 @@ export default function CreateTournamentPage() {
                 <h2 className="form-section-title">Basic Information</h2>
                 <div className="form-group">
                   <label>Tournament Name *</label>
-                  <input name="name" value={form.name} onChange={handleChange} placeholder="e.g. FPTC Summer Open 2026" />
+                  <input name="name" maxLength={100} value={form.name} onChange={handleChange} placeholder="e.g. Summer Club Open 2026" />
                 </div>
                 <div className="form-group">
                   <label>Description</label>
@@ -157,15 +177,15 @@ export default function CreateTournamentPage() {
                 <div className="form-row">
                   <div className="form-group">
                     <label>Start Date *</label>
-                    <input name="startDate" type="date" value={form.startDate} onChange={handleChange} />
+                    <input name="startDate" type="date" min={today()} value={form.startDate} onChange={handleChange} />
                   </div>
                   <div className="form-group">
                     <label>End Date *</label>
-                    <input name="endDate" type="date" value={form.endDate} onChange={handleChange} />
+                    <input name="endDate" type="date" min={form.startDate || today()} value={form.endDate} onChange={handleChange} />
                   </div>
                   <div className="form-group">
                     <label>Registration Deadline</label>
-                    <input name="registrationDeadline" type="date" value={form.registrationDeadline} onChange={handleChange} />
+                    <input name="registrationDeadline" type="date" min={today()} max={form.startDate || undefined} value={form.registrationDeadline} onChange={handleChange} />
                   </div>
                 </div>
               </div>
@@ -179,20 +199,18 @@ export default function CreateTournamentPage() {
                   <div className="form-group">
                     <label>Tournament Type</label>
                     <select name="tournamentType" value={form.tournamentType} onChange={handleChange}>
-                      <option value="SINGLES_MEN">Singles Men</option>
-                      <option value="SINGLES_WOMEN">Singles Women</option>
-                      <option value="DOUBLES_MEN">Doubles Men</option>
-                      <option value="DOUBLES_WOMEN">Doubles Women</option>
-                      <option value="MIXED_DOUBLES">Mixed Doubles</option>
+                      {Object.keys(TYPE_LABEL).filter(v => !UNAVAILABLE_TYPES.includes(v)).map(v => (
+                        <option key={v} value={v}>{TYPE_LABEL[v]}</option>
+                      ))}
                     </select>
+                    <small className="form-hint">Doubles and mixed doubles are coming soon.</small>
                   </div>
                   <div className="form-group">
                     <label>Draw Format</label>
                     <select name="drawFormat" value={form.drawFormat} onChange={handleChange}>
-                      <option value="SINGLE_ELIMINATION">Single Elimination</option>
-                      <option value="DOUBLE_ELIMINATION">Double Elimination</option>
-                      <option value="ROUND_ROBIN">Round Robin</option>
-                      <option value="GROUP_STAGE_KNOCKOUT">Group Stage + Knockout</option>
+                      {Object.keys(FORMAT_LABEL).filter(v => !UNAVAILABLE_FORMATS.includes(v)).map(v => (
+                        <option key={v} value={v}>{FORMAT_LABEL[v]}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -251,6 +269,17 @@ export default function CreateTournamentPage() {
                       </select>
                     </div>
                   </div>
+                )}
+                {form.drawFormat === "GROUP_STAGE_KNOCKOUT" && (
+                  <p className="form-hint">
+                    Every group needs at least 3 players and more players than it sends through, so this setup needs at
+                    least <strong>{groupMinimum(form.numberOfGroups, form.advancePerGroup)}</strong> approved players.
+                    {Number(form.numberOfGroups) !== suggestedGroups(form.maxParticipants) && (
+                      <> For up to {form.maxParticipants} players, <button type="button" className="form-link" onClick={() => set("numberOfGroups", suggestedGroups(form.maxParticipants))}>
+                        use {suggestedGroups(form.maxParticipants)} groups
+                      </button>.</>
+                    )}
+                  </p>
                 )}
               </div>
             )}
@@ -338,9 +367,9 @@ export default function CreateTournamentPage() {
                   <div className="summary-grid">
                     <span>Name</span><span><strong>{form.name}</strong></span>
                     <span>Dates</span><span>{form.startDate} → {form.endDate}</span>
-                    <span>Type</span><span>{form.tournamentType?.replace(/_/g, " ")}</span>
-                    <span>Format</span><span>{form.drawFormat?.replace(/_/g, " ")}</span>
-                    <span>Surface</span><span>{form.surface}</span>
+                    <span>Type</span><span>{label(TYPE_LABEL, form.tournamentType)}</span>
+                    <span>Format</span><span>{label(FORMAT_LABEL, form.drawFormat)}</span>
+                    <span>Surface</span><span>{label(SURFACE_LABEL, form.surface)}</span>
                     <span>Max Players</span><span>{form.maxParticipants}</span>
                     <span>Sets to Win</span><span>{form.setsToWin === 1 ? "Best of 1" : form.setsToWin === 2 ? "Best of 3" : "Best of 5"}</span>
                     <span>Games/Set</span><span>{form.gamesPerSet}</span>

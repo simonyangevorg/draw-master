@@ -5,7 +5,7 @@ import { ORGANISER_EMAIL, ORGANISER_PASSWORD } from './global-setup.js';
 async function createTournament(page, overrides = {}) {
   await page.goto('/tournaments/new');
 
-  await page.getByPlaceholder('e.g. FPTC Summer Open 2026').fill(overrides.name);
+  await page.getByPlaceholder('e.g. Summer Club Open 2026').fill(overrides.name);
   await page.locator('input[name="startDate"]').fill('2027-01-01');
   await page.locator('input[name="endDate"]').fill('2027-01-05');
   await page.getByRole('button', { name: /Continue/ }).click();
@@ -54,7 +54,10 @@ test('register, login, create tournament, open, enroll, generate draw, record sc
   }
 
   await organiserPage.goto(tournamentUrl);
-  await organiserPage.getByRole('button', { name: 'Generate Draw' }).click();
+  // Generate Draw asks for confirmation first (B-19).
+  await organiserPage.getByRole('button', { name: 'Generate Draw', exact: true }).first().click();
+  await expect(organiserPage.getByRole('alertdialog', { name: 'Confirm draw generation' })).toContainText('2 approved players');
+  await organiserPage.getByRole('button', { name: 'Generate draw', exact: true }).click();
   await expect(organiserPage.getByText('Draw generated successfully!')).toBeVisible();
 
   await organiserPage.getByRole('button', { name: 'Draw', exact: true }).click();
@@ -66,6 +69,23 @@ test('register, login, create tournament, open, enroll, generate draw, record sc
   await organiserPage.locator('.score-input').nth(1).fill('2');
   await organiserPage.getByRole('button', { name: 'Save & Advance Winner' }).click();
   await expect(organiserPage.getByText('Score saved')).toBeVisible();
+
+  // B-19: once a result is in, the draw can't be rearranged, in the UI or the API.
+  await expect(organiserPage.locator('.bk-remove-btn')).toHaveCount(0);
+  await expect(organiserPage.getByText('The draw is locked')).toBeVisible();
+  const tournamentId = tournamentUrl.split('/').pop();
+  const status = await organiserPage.evaluate(async (id) => {
+    const { token } = JSON.parse(localStorage.getItem('tennis_user'));
+    const draw = await (await fetch(`/api/tournaments/${id}/draw`)).json();
+    const ids = draw.flatMap((m) => [m.participant1Id, m.participant2Id]).filter(Boolean);
+    const res = await fetch(`/api/tournaments/${id}/draw/swap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ participantId1: ids[0], participantId2: ids[1] }),
+    });
+    return res.status;
+  }, tournamentId);
+  expect(status).toBe(400);
 
   for (const ctx of memberContexts) await ctx.close();
   await organiserContext.close();

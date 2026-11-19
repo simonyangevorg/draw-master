@@ -8,7 +8,7 @@ test('withdrawing uses an inline confirmation, not a native dialog', async ({ br
   await login(organiserPage, ORGANISER_EMAIL, ORGANISER_PASSWORD);
 
   await organiserPage.goto('/tournaments/new');
-  await organiserPage.getByPlaceholder('e.g. FPTC Summer Open 2026').fill(`E2E Withdraw ${Date.now()}`);
+  await organiserPage.getByPlaceholder('e.g. Summer Club Open 2026').fill(`E2E Withdraw ${Date.now()}`);
   await organiserPage.locator('input[name="startDate"]').fill('2027-04-01');
   await organiserPage.locator('input[name="endDate"]').fill('2027-04-05');
   await organiserPage.getByRole('button', { name: /Continue/ }).click();
