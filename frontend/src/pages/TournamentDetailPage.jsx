@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
 import BracketView from "../components/BracketView";
 import GroupStageView from "../components/GroupStageView";
 import Sidebar from "../components/Sidebar";
-import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, VISIBILITY_LABEL, label } from "../constants";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, VISIBILITY_LABEL, CATEGORY_LABEL, STATUS_LABEL, label } from "../constants";
 
 export default function TournamentDetailPage() {
   const { id } = useParams();
@@ -13,13 +13,14 @@ export default function TournamentDetailPage() {
   const navigate = useNavigate();
 
   const [tournament, setTournament]   = useState(null);
-  const [draw, setDraw]               = useState([]);
+  const [allDraw, setDraw]            = useState([]);
   const [activeTab, setActiveTab]     = useState("overview");
   const [loading, setLoading]         = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [msg, setMsg]                 = useState({ text: "", error: false });
   const [confirmWithdrawId, setConfirmWithdrawId] = useState(null);
   const [confirmDraw, setConfirmDraw] = useState(false);
+  const [eventId, setEventId] = useState(null); // the event being looked at (F-01)
 
   // What this user may do comes from the server (L-06): club admins and the
   // super-admin manage; club members (and, for now, anyone on a PUBLIC one) enter.
@@ -56,15 +57,15 @@ export default function TournamentDetailPage() {
     setConfirmDraw(false);
     setActionLoading(true);
     setMsg({ text: "" });
-    const res = await apiPost(`/api/tournaments/${id}/draw`);
-    if (res.ok) { await loadTournament(); flash("Draw generated successfully!"); }
+    const res = await apiPost(`/api/tournaments/${id}/events/${event.id}/draw`);
+    if (res.ok) { await loadTournament(); flash(`Draw generated for ${event.name}!`); }
     else { flash(await errorMessage(res, "Could not generate draw"), true); }
     setActionLoading(false);
   }
 
   async function enroll() {
     setActionLoading(true);
-    const res = await apiPost(`/api/tournaments/${id}/participants`, { playerId: user.id });
+    const res = await apiPost(`/api/tournaments/${id}/events/${event.id}/participants`, { playerId: user.id });
     if (res.ok) { await loadTournament(); flash("Application submitted successfully!"); }
     else { flash(await errorMessage(res, "Failed to apply"), true); }
     setActionLoading(false);
@@ -96,7 +97,7 @@ export default function TournamentDetailPage() {
 
   async function swapInDraw(pid1, pid2) {
     const res = await apiPost(`/api/tournaments/${id}/draw/swap`, { participantId1: pid1, participantId2: pid2 });
-    if (res.ok) { const d = await res.json(); setDraw(Array.isArray(d) ? d : []); }
+    if (res.ok) await loadTournament();
     else { flash(await errorMessage(res, "Swap failed"), true); }
   }
 
@@ -110,17 +111,21 @@ export default function TournamentDetailPage() {
   if (!tournament?.id) return <div className="page-loading">Tournament not found.</div>;
 
   const badge = STATUS_BADGE[tournament.status] ?? STATUS_BADGE.DRAFT;
-  const participants = tournament.participants ?? [];
+  const events = tournament.events ?? [];
+  const event = events.find(e => e.id === eventId) ?? events[0] ?? {};
+  // Entries and matches of the event on screen.
+  const participants = (tournament.participants ?? []).filter(p => p.eventId === event.id);
+  const draw = allDraw.filter(m => m.eventId === event.id);
   const approvedCount = participants.filter(p => p.status === "APPROVED").length;
   const pendingEntries = participants.filter(p => p.status === "PENDING");
-  const entryCount = `${approvedCount}/${tournament.maxParticipants}${pendingEntries.length ? ` · ${pendingEntries.length} pending` : ""}`;
+  const entryCount = `${approvedCount}/${event.maxParticipants}${pendingEntries.length ? ` · ${pendingEntries.length} pending` : ""}`;
   // Once any match has a result, the draw can no longer be rearranged (B-19).
   const drawLocked = draw.some(m => m.status === "COMPLETED" || m.status === "WALKOVER");
   const deadline = tournament.registrationDeadline;
 
   // Current user's participation record (if any)
   const myParticipant = participants.find(p => p.playerId === user?.id);
-  const canApply = !isOrganiser && tournament.status === "OPEN" && !myParticipant && !!tournament.access?.canEnter;
+  const canApply = !isOrganiser && event.status === "OPEN" && !myParticipant && !!tournament.access?.canEnter;
 
   // Players not yet in the draw (APPROVED but no slot in any match)
   const inDrawIds = new Set(draw.flatMap(m => [m.participant1Id, m.participant2Id]).filter(Boolean));
@@ -153,7 +158,7 @@ export default function TournamentDetailPage() {
               {tournament.status === "DRAFT" && (
                 <button className="btn btn-primary" onClick={openRegistration} disabled={actionLoading}>Open Registration</button>
               )}
-              {tournament.status === "OPEN" && (
+              {event.status === "OPEN" && tournament.status !== "DRAFT" && (
                 <button className="btn btn-primary" onClick={() => setConfirmDraw(true)} disabled={actionLoading || confirmDraw}>Generate Draw</button>
               )}
             </div>
@@ -168,7 +173,7 @@ export default function TournamentDetailPage() {
         {confirmDraw && (
           <div className="alert alert-info confirm-banner" role="alertdialog" aria-label="Confirm draw generation">
             <div>
-              <strong>Generate the draw with {approvedCount} approved player{approvedCount === 1 ? "" : "s"}?</strong>
+              <strong>Generate the {event.name} draw with {approvedCount} approved player{approvedCount === 1 ? "" : "s"}?</strong>
               {" "}Entries, approvals and seeds are locked afterwards.
               {pendingEntries.length > 0 && (
                 <div className="confirm-banner-note">
@@ -194,12 +199,29 @@ export default function TournamentDetailPage() {
           </div>
         )}
 
+        {/* ── Events (F-01) ── */}
+        {events.length > 0 && (
+          <div className="event-tabs" role="tablist" aria-label="Events">
+            {events.map(e => {
+              const n = (tournament.participants ?? []).filter(p => p.eventId === e.id && p.status === "APPROVED").length;
+              return (
+                <button key={e.id} role="tab" aria-selected={e.id === event.id}
+                  className={`event-tab${e.id === event.id ? " event-tab-active" : ""}`}
+                  onClick={() => { setEventId(e.id); setConfirmDraw(false); }}>
+                  <span className="event-tab-name">{e.name}</span>
+                  <span className="event-tab-meta">{label(STATUS_LABEL, e.status)} · {n}/{e.maxParticipants}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* ── Player enrolment action bar ── */}
         {!isOrganiser && (
           <div className="enrol-bar">
             {canApply && (
               <>
-                <span className="enrol-bar-text">Registration is open — secure your spot now.</span>
+                <span className="enrol-bar-text">Entries for <strong>{event.name}</strong> are open — secure your spot now.</span>
                 <button className="btn btn-primary" onClick={enroll} disabled={actionLoading}>Apply to Tournament</button>
               </>
             )}
@@ -211,8 +233,8 @@ export default function TournamentDetailPage() {
             )}
             {myParticipant?.status === "APPROVED" && (
               <>
-                <span className="enrol-bar-text">You are <strong>registered</strong> for this tournament.</span>
-                {tournament.status === "OPEN" && (
+                <span className="enrol-bar-text">You are <strong>registered</strong> for {event.name}.</span>
+                {event.status === "OPEN" && (
                   <button className="btn btn-ghost btn-sm" onClick={() => withdrawParticipant(myParticipant.id)} disabled={actionLoading}>Withdraw</button>
                 )}
               </>
@@ -220,7 +242,7 @@ export default function TournamentDetailPage() {
             {myParticipant?.status === "REJECTED" && (
               <span className="enrol-bar-text" style={{ color: "#991b1b" }}>Your application was rejected by the organiser.</span>
             )}
-            {myParticipant?.status === "WITHDRAWN" && tournament.status === "OPEN" && (
+            {myParticipant?.status === "WITHDRAWN" && event.status === "OPEN" && (
               <>
                 <span className="enrol-bar-text">You previously withdrew from this tournament.</span>
                 <button className="btn btn-primary" onClick={enroll} disabled={actionLoading}>Apply again</button>
@@ -245,25 +267,26 @@ export default function TournamentDetailPage() {
               <h3>Tournament Details</h3>
               <dl className="detail-list">
                 {tournament.club && <><dt>Club</dt><dd>{tournament.club.name}</dd></>}
-                <dt>Type</dt><dd>{label(TYPE_LABEL, tournament.tournamentType)}</dd>
-                <dt>Format</dt><dd>{label(FORMAT_LABEL, tournament.drawFormat)}</dd>
+                <dt>Events</dt><dd>{events.map(e => e.name).join(", ") || "—"}</dd>
                 <dt>Surface</dt><dd>{label(SURFACE_LABEL, tournament.surface)}</dd>
                 <dt>Age Group</dt><dd>{label(AGE_GROUP_LABEL, tournament.ageGroup)}</dd>
-                <dt>Entries</dt><dd>{entryCount}</dd>
                 <dt>Entries close</dt><dd>{deadline || "When the draw is made"}</dd>
                 {tournament.venue && <><dt>Venue</dt><dd>{tournament.venue}</dd></>}
                 {tournament.description && <><dt>Description</dt><dd>{tournament.description}</dd></>}
               </dl>
             </div>
             <div className="detail-card">
-              <h3>Match Format</h3>
+              <h3>{event.name}</h3>
               <dl className="detail-list">
-                <dt>Sets to Win</dt><dd>{tournament.setsToWin === 1 ? "Best of 1" : tournament.setsToWin === 2 ? "Best of 3" : "Best of 5"}</dd>
-                <dt>Games per Set</dt><dd>{tournament.gamesPerSet}</dd>
-                <dt>Tiebreak at</dt><dd>{tournament.tiebreakAt}-{tournament.tiebreakAt}</dd>
-                <dt>Final Set</dt><dd>{tournament.finalSetTiebreak ? "Champion Tiebreak" : "Full Set"}</dd>
-                <dt>No-Ad Scoring</dt><dd>{tournament.noAd ? "Yes" : "No"}</dd>
-                <dt>Seeded</dt><dd>{tournament.seeded ? "Yes" : "No"}</dd>
+                <dt>Category</dt><dd>{label(CATEGORY_LABEL, event.category)}</dd>
+                <dt>Format</dt><dd>{label(FORMAT_LABEL, event.drawFormat)}</dd>
+                <dt>Entries</dt><dd>{entryCount}</dd>
+                <dt>Sets to Win</dt><dd>{event.setsToWin === 1 ? "Best of 1" : event.setsToWin === 2 ? "Best of 3" : "Best of 5"}</dd>
+                <dt>Games per Set</dt><dd>{event.gamesPerSet}</dd>
+                <dt>Tiebreak at</dt><dd>{event.tiebreakAt}-{event.tiebreakAt}</dd>
+                <dt>Final Set</dt><dd>{event.finalSetTiebreak ? "Champion Tiebreak" : "Full Set"}</dd>
+                <dt>No-Ad Scoring</dt><dd>{event.noAd ? "Yes" : "No"}</dd>
+                <dt>Seeded</dt><dd>{event.seeded ? "Yes" : "No"}</dd>
               </dl>
             </div>
             <div className="detail-card">
@@ -285,7 +308,7 @@ export default function TournamentDetailPage() {
             participants={participants}
             isOrganiser={isOrganiser}
             currentUserId={user?.id}
-            tournamentStatus={tournament.status}
+            tournamentStatus={event.status}
             onWithdraw={withdrawParticipant}
             onApprove={approveParticipant}
             onReject={rejectParticipant}
@@ -298,14 +321,14 @@ export default function TournamentDetailPage() {
             {draw.length === 0 ? (
               <div className="dash-empty">
                 <div className="dash-empty-icon">🎾</div>
-                <p>{tournament.status === "OPEN" && isOrganiser ? "Draw not generated yet." : "Draw not available yet."}</p>
-                {tournament.status === "OPEN" && isOrganiser && (
+                <p>{event.status === "OPEN" && isOrganiser ? `The ${event.name} draw isn't generated yet.` : "Draw not available yet."}</p>
+                {event.status === "OPEN" && tournament.status !== "DRAFT" && isOrganiser && (
                   <button className="btn btn-primary" onClick={() => setConfirmDraw(true)} disabled={actionLoading || confirmDraw}>Generate Draw</button>
                 )}
               </div>
-            ) : tournament.drawFormat === "GROUP_STAGE_KNOCKOUT" ? (
+            ) : event.drawFormat === "GROUP_STAGE_KNOCKOUT" ? (
               <GroupStageView
-                tournament={tournament}
+                tournament={{ ...tournament, ...event, groups: (tournament.groups ?? []).filter(g => g.eventId === event.id) }}
                 draw={draw}
                 participants={participants}
                 isOrganiser={isOrganiser}
@@ -319,7 +342,7 @@ export default function TournamentDetailPage() {
                 isOrganiser={isOrganiser}
                 drawLocked={drawLocked}
                 tournamentId={id}
-                setsToWin={tournament.setsToWin ?? 2}
+                setsToWin={event.setsToWin ?? 2}
                 onSwap={swapInDraw}
                 onScore={scoreMatch}
                 onReload={loadTournament}

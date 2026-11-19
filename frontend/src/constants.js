@@ -74,3 +74,23 @@ export function label(map, value) {
   if (value == null || value === "") return "—";
   return map[value] ?? String(value).toLowerCase().replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
 }
+
+/** An event's category (F-01). Eligibility by gender arrives with F-03. */
+export const CATEGORY_LABEL = {
+  MEN:   "Men",
+  WOMEN: "Women",
+  MIXED: "Mixed",
+  OPEN:  "Open to all",
+};
+
+/** Status of a tournament or an event, in words. */
+export const STATUS_LABEL = {
+  DRAFT:       "Draft",
+  OPEN:        "Entries open",
+  IN_PROGRESS: "In play",
+  COMPLETED:   "Finished",
+  CANCELLED:   "Cancelled",
+};
+
+/** A tournament's events as one line: "Men's Singles, Women's Singles". */
+export const eventNames = (t) => (t?.events ?? []).slice().sort((a, b) => a.position - b.position).map(e => e.name).join(", ");

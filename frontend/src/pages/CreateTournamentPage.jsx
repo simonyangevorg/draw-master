@@ -3,9 +3,9 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { apiGet, apiPost, errorMessage } from "../api";
 import Sidebar from "../components/Sidebar";
-import { TYPE_LABEL, FORMAT_LABEL, SURFACE_LABEL, UNAVAILABLE_TYPES, UNAVAILABLE_FORMATS, label } from "../constants";
+import { FORMAT_LABEL, SURFACE_LABEL, CATEGORY_LABEL, UNAVAILABLE_FORMATS, label } from "../constants";
 
-const STEPS = ["Basic Info", "Format", "Match Rules", "Settings"];
+const STEPS = ["Basic Info", "Events", "Match Rules", "Settings"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -15,15 +15,21 @@ const groupMinimum = (groups, advance) => Number(groups) * Math.max(3, Number(ad
 /** A sensible group count for the entry size: groups of about 4. */
 const suggestedGroups = (max) => (Number(max) <= 8 ? 2 : Number(max) <= 16 ? 4 : 8);
 
+const CATEGORY_NAME = { MEN: "Men's Singles", WOMEN: "Women's Singles", OPEN: "Open Singles" };
+
+/** A new event, named after its category until the organiser renames it. */
+const newEvent = (category = "MEN") => ({
+  name: CATEGORY_NAME[category], category, drawFormat: "SINGLE_ELIMINATION",
+  maxParticipants: 16, minParticipants: 4, numberOfGroups: 4, advancePerGroup: 2,
+});
+
 const INITIAL = {
   // Step 1
   clubId: "", name: "", description: "", venue: "", city: "", country: "",
   startDate: "", endDate: "", registrationDeadline: "",
   // Step 2
-  tournamentType: "SINGLES_MEN", drawFormat: "SINGLE_ELIMINATION",
+  events: [newEvent("MEN")],
   surface: "HARD_OUTDOOR", ageGroup: "OPEN",
-  maxParticipants: 16, minParticipants: 4,
-  numberOfGroups: 4, advancePerGroup: 2,
   // Step 3
   setsToWin: 2, gamesPerSet: 6, tiebreakAt: 6,
   finalSetTiebreak: false, noAd: false, seeded: true,
@@ -67,6 +73,28 @@ export default function CreateTournamentPage() {
     set(name, type === "checkbox" ? checked : value);
   }
 
+  function setEvent(i, field, value) {
+    setForm(p => {
+      const events = p.events.map((e, j) => {
+        if (j !== i) return e;
+        const updated = { ...e, [field]: value };
+        // Keep the default name in step with the category until it's been changed by hand.
+        if (field === "category" && e.name === CATEGORY_NAME[e.category]) updated.name = CATEGORY_NAME[value];
+        return updated;
+      });
+      return { ...p, events };
+    });
+    setError("");
+  }
+  function addEvent() {
+    const used = new Set(form.events.map(e => e.category));
+    const category = ["WOMEN", "MEN", "OPEN"].find(c => !used.has(c)) ?? "OPEN";
+    setForm(p => ({ ...p, events: [...p.events, newEvent(category)] }));
+  }
+  function removeEvent(i) {
+    setForm(p => ({ ...p, events: p.events.filter((_, j) => j !== i) }));
+  }
+
   function next() {
     if (!validateStep()) return;
     setStep(s => s + 1);
@@ -86,18 +114,26 @@ export default function CreateTournamentPage() {
       }
     }
     if (step === 1) {
-      if (Number(form.minParticipants) > Number(form.maxParticipants)) {
-        setError("Min participants can't be more than max participants."); return false;
-      }
-      if (form.drawFormat === "GROUP_STAGE_KNOCKOUT") {
-        const need = groupMinimum(form.numberOfGroups, form.advancePerGroup);
-        if (need > Number(form.maxParticipants)) {
-          setError(`${form.numberOfGroups} groups sending ${form.advancePerGroup} through need at least ${need} players, more than the maximum of ${form.maxParticipants}. Use fewer groups.`);
-          return false;
+      if (!form.events.length) { setError("Add at least one event."); return false; }
+      const names = new Set();
+      for (const ev of form.events) {
+        const name = ev.name.trim();
+        if (!name) { setError("Every event needs a name."); return false; }
+        if (names.has(name.toLowerCase())) { setError(`Two events are called "${name}".`); return false; }
+        names.add(name.toLowerCase());
+        if (Number(ev.minParticipants) > Number(ev.maxParticipants)) {
+          setError(`${name}: min participants can't be more than max participants.`); return false;
         }
-        if (Number(form.minParticipants) < need) {
-          setError(`${form.numberOfGroups} groups sending ${form.advancePerGroup} through need at least ${need} players: set Min Participants to ${need} or more.`);
-          return false;
+        if (ev.drawFormat === "GROUP_STAGE_KNOCKOUT") {
+          const need = groupMinimum(ev.numberOfGroups, ev.advancePerGroup);
+          if (need > Number(ev.maxParticipants)) {
+            setError(`${name}: ${ev.numberOfGroups} groups sending ${ev.advancePerGroup} through need at least ${need} players, more than the maximum of ${ev.maxParticipants}. Use fewer groups.`);
+            return false;
+          }
+          if (Number(ev.minParticipants) < need) {
+            setError(`${name}: ${ev.numberOfGroups} groups sending ${ev.advancePerGroup} through need at least ${need} players: set Min Participants to ${need} or more.`);
+            return false;
+          }
         }
       }
     }
@@ -110,19 +146,29 @@ export default function CreateTournamentPage() {
     setLoading(true);
     setError("");
     try {
+      const { events, setsToWin, gamesPerSet, tiebreakAt, finalSetTiebreak, noAd, seeded, ...rest } = form;
       const payload = {
-        ...form,
-        maxParticipants: Number(form.maxParticipants),
-        minParticipants: Number(form.minParticipants),
-        setsToWin: Number(form.setsToWin),
-        gamesPerSet: Number(form.gamesPerSet),
-        tiebreakAt: Number(form.tiebreakAt),
+        ...rest,
         rankingPoints: form.rankingPoints ? Number(form.rankingPoints) : undefined,
         entryFee: form.entryFee ? Number(form.entryFee) : undefined,
         prizePool: form.prizePool ? Number(form.prizePool) : undefined,
         registrationDeadline: form.registrationDeadline || undefined,
-        numberOfGroups: form.drawFormat === "GROUP_STAGE_KNOCKOUT" ? Number(form.numberOfGroups) : undefined,
-        advancePerGroup: form.drawFormat === "GROUP_STAGE_KNOCKOUT" ? Number(form.advancePerGroup) : undefined,
+        // Match rules apply to every event until per-stage rules arrive (F-05).
+        events: events.map(ev => ({
+          name: ev.name.trim(),
+          category: ev.category,
+          drawFormat: ev.drawFormat,
+          maxParticipants: Number(ev.maxParticipants),
+          minParticipants: Number(ev.minParticipants),
+          numberOfGroups: ev.drawFormat === "GROUP_STAGE_KNOCKOUT" ? Number(ev.numberOfGroups) : undefined,
+          advancePerGroup: ev.drawFormat === "GROUP_STAGE_KNOCKOUT" ? Number(ev.advancePerGroup) : undefined,
+          setsToWin: Number(setsToWin),
+          gamesPerSet: Number(gamesPerSet),
+          tiebreakAt: Number(tiebreakAt),
+          finalSetTiebreak,
+          noAd,
+          seeded,
+        })),
       };
 
       const res = await apiPost("/api/tournaments/", payload);
@@ -220,41 +266,89 @@ export default function CreateTournamentPage() {
               </div>
             )}
 
-            {/* ── Step 1: Format ── */}
+            {/* ── Step 1: Events (F-01) ── */}
             {step === 1 && (
               <div className="form-section">
-                <h2 className="form-section-title">Tournament Format</h2>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Tournament Type</label>
-                    <select name="tournamentType" value={form.tournamentType} onChange={handleChange}>
-                      {Object.keys(TYPE_LABEL).filter(v => !UNAVAILABLE_TYPES.includes(v)).map(v => (
-                        <option key={v} value={v}>{TYPE_LABEL[v]}</option>
-                      ))}
-                    </select>
-                    <small className="form-hint">Doubles and mixed doubles are coming soon.</small>
-                  </div>
-                  <div className="form-group">
-                    <label>Draw Format</label>
-                    <select name="drawFormat" value={form.drawFormat} onChange={handleChange}>
-                      {Object.keys(FORMAT_LABEL).filter(v => !UNAVAILABLE_FORMATS.includes(v)).map(v => (
-                        <option key={v} value={v}>{FORMAT_LABEL[v]}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="form-row">
+                <h2 className="form-section-title">Events</h2>
+                <p className="form-hint" style={{ marginTop: 0, marginBottom: "1rem" }}>
+                  A tournament can run several events, each with its own entries and draw. Doubles and mixed doubles are coming soon.
+                </p>
+                {form.events.map((ev, i) => (
+                  <fieldset key={i} className="event-editor">
+                    <legend>Event {i + 1}</legend>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label htmlFor={`ev-name-${i}`}>Event name</label>
+                        <input id={`ev-name-${i}`} name="eventName" maxLength={60} value={ev.name} onChange={e => setEvent(i, "name", e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor={`ev-cat-${i}`}>Category</label>
+                        <select id={`ev-cat-${i}`} name="category" value={ev.category} onChange={e => setEvent(i, "category", e.target.value)}>
+                          {["MEN", "WOMEN", "OPEN"].map(c => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor={`ev-format-${i}`}>Draw Format</label>
+                        <select id={`ev-format-${i}`} name="drawFormat" value={ev.drawFormat} onChange={e => setEvent(i, "drawFormat", e.target.value)}>
+                          {Object.keys(FORMAT_LABEL).filter(v => !UNAVAILABLE_FORMATS.includes(v)).map(v => (
+                            <option key={v} value={v}>{FORMAT_LABEL[v]}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label htmlFor={`ev-max-${i}`}>Max Participants</label>
+                        <select id={`ev-max-${i}`} name="maxParticipants" value={ev.maxParticipants} onChange={e => setEvent(i, "maxParticipants", e.target.value)}>
+                          {[8, 16, 32, 64].map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor={`ev-min-${i}`}>Min Participants</label>
+                        <input id={`ev-min-${i}`} name="minParticipants" type="number" min={2} value={ev.minParticipants} onChange={e => setEvent(i, "minParticipants", e.target.value)} />
+                      </div>
+                      {ev.drawFormat === "GROUP_STAGE_KNOCKOUT" && (
+                        <>
+                          <div className="form-group">
+                            <label htmlFor={`ev-groups-${i}`}>Number of Groups</label>
+                            <select id={`ev-groups-${i}`} name="numberOfGroups" value={ev.numberOfGroups} onChange={e => setEvent(i, "numberOfGroups", e.target.value)}>
+                              {[2, 3, 4, 6, 8].map(n => <option key={n} value={n}>{n} groups</option>)}
+                            </select>
+                          </div>
+                          <div className="form-group">
+                            <label htmlFor={`ev-adv-${i}`}>Advance per Group</label>
+                            <select id={`ev-adv-${i}`} name="advancePerGroup" value={ev.advancePerGroup} onChange={e => setEvent(i, "advancePerGroup", e.target.value)}>
+                              {[1, 2, 3].map(n => <option key={n} value={n}>{n} player{n > 1 ? "s" : ""}</option>)}
+                            </select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {ev.drawFormat === "GROUP_STAGE_KNOCKOUT" && (
+                      <p className="form-hint">
+                        Every group needs at least 3 players and more players than it sends through, so this setup needs at
+                        least <strong>{groupMinimum(ev.numberOfGroups, ev.advancePerGroup)}</strong> approved players.
+                        {Number(ev.numberOfGroups) !== suggestedGroups(ev.maxParticipants) && (
+                          <> For up to {ev.maxParticipants} players, <button type="button" className="form-link" onClick={() => setEvent(i, "numberOfGroups", suggestedGroups(ev.maxParticipants))}>
+                            use {suggestedGroups(ev.maxParticipants)} groups
+                          </button>.</>
+                        )}
+                      </p>
+                    )}
+                    {form.events.length > 1 && (
+                      <button type="button" className="btn-withdraw" onClick={() => removeEvent(i)}>Remove event</button>
+                    )}
+                  </fieldset>
+                ))}
+                {form.events.length < 10 && (
+                  <button type="button" className="btn btn-ghost" onClick={addEvent}>+ Add another event</button>
+                )}
+
+                <div className="form-row" style={{ marginTop: "1.5rem" }}>
                   <div className="form-group">
                     <label>Surface</label>
                     <select name="surface" value={form.surface} onChange={handleChange}>
-                      <option value="CLAY">Clay (Outdoor)</option>
-                      <option value="HARD_OUTDOOR">Hard (Outdoor)</option>
-                      <option value="HARD_INDOOR">Hard (Indoor)</option>
-                      <option value="GRASS">Grass</option>
-                      <option value="CARPET">Carpet (Indoor)</option>
-                      <option value="ACRYLIC">Acrylic</option>
-                      <option value="ARTIFICIAL_CLAY">Artificial Clay</option>
-                      <option value="ARTIFICIAL_GRASS">Artificial Grass</option>
+                      {Object.keys(SURFACE_LABEL).map(v => <option key={v} value={v}>{SURFACE_LABEL[v]}</option>)}
                     </select>
                   </div>
                   <div className="form-group">
@@ -268,48 +362,6 @@ export default function CreateTournamentPage() {
                     </select>
                   </div>
                 </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Max Participants</label>
-                    <select name="maxParticipants" value={form.maxParticipants} onChange={handleChange}>
-                      <option value={8}>8</option>
-                      <option value={16}>16</option>
-                      <option value={32}>32</option>
-                      <option value={64}>64</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>Min Participants</label>
-                    <input name="minParticipants" type="number" min={2} value={form.minParticipants} onChange={handleChange} />
-                  </div>
-                </div>
-                {form.drawFormat === "GROUP_STAGE_KNOCKOUT" && (
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Number of Groups</label>
-                      <select name="numberOfGroups" value={form.numberOfGroups} onChange={handleChange}>
-                        {[2,3,4,6,8].map(n => <option key={n} value={n}>{n} groups</option>)}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label>Advance per Group</label>
-                      <select name="advancePerGroup" value={form.advancePerGroup} onChange={handleChange}>
-                        {[1,2,3].map(n => <option key={n} value={n}>{n} player{n > 1 ? "s" : ""}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                )}
-                {form.drawFormat === "GROUP_STAGE_KNOCKOUT" && (
-                  <p className="form-hint">
-                    Every group needs at least 3 players and more players than it sends through, so this setup needs at
-                    least <strong>{groupMinimum(form.numberOfGroups, form.advancePerGroup)}</strong> approved players.
-                    {Number(form.numberOfGroups) !== suggestedGroups(form.maxParticipants) && (
-                      <> For up to {form.maxParticipants} players, <button type="button" className="form-link" onClick={() => set("numberOfGroups", suggestedGroups(form.maxParticipants))}>
-                        use {suggestedGroups(form.maxParticipants)} groups
-                      </button>.</>
-                    )}
-                  </p>
-                )}
               </div>
             )}
 
@@ -400,10 +452,8 @@ export default function CreateTournamentPage() {
                   <div className="summary-grid">
                     <span>Name</span><span><strong>{form.name}</strong></span>
                     <span>Dates</span><span>{form.startDate} → {form.endDate}</span>
-                    <span>Type</span><span>{label(TYPE_LABEL, form.tournamentType)}</span>
-                    <span>Format</span><span>{label(FORMAT_LABEL, form.drawFormat)}</span>
+                    <span>Events</span><span>{form.events.map(ev => `${ev.name} (${label(FORMAT_LABEL, ev.drawFormat)}, up to ${ev.maxParticipants})`).join("; ")}</span>
                     <span>Surface</span><span>{label(SURFACE_LABEL, form.surface)}</span>
-                    <span>Max Players</span><span>{form.maxParticipants}</span>
                     <span>Sets to Win</span><span>{form.setsToWin === 1 ? "Best of 1" : form.setsToWin === 2 ? "Best of 3" : "Best of 5"}</span>
                     <span>Games/Set</span><span>{form.gamesPerSet}</span>
                   </div>

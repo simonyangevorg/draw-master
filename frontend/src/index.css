@@ -1238,3 +1238,15 @@ button.form-link { background: none; border: 0; padding: 0; cursor: pointer; fon
 /* ── Club admin lists (L-03) ── */
 .admin-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
 .admin-list li { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .5rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+
+/* ── Event switcher (F-01) ── */
+.event-tabs { display: flex; gap: .5rem; overflow-x: auto; margin: 0 0 1rem; padding-bottom: .25rem; }
+.event-tab { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; padding: .55rem .9rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; white-space: nowrap; font: inherit; color: var(--text); }
+.event-tab-active { border-color: var(--green); background: var(--green-light); }
+.event-tab-name { font-weight: 700; font-size: .9rem; }
+.event-tab-meta { font-size: .75rem; color: var(--text-muted); }
+
+/* ── Wizard event editor (F-01) ── */
+.event-editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1rem .5rem; margin: 0 0 1rem; }
+.event-editor legend { font-weight: 700; font-size: .85rem; padding: 0 .4rem; color: var(--green-dark); }
+.event-editor .btn-withdraw { margin-bottom: .75rem; }

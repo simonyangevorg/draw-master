@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { apiGet } from "../api";
-import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, ROLE_LABEL, label } from "../constants";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, ROLE_LABEL, label, eventNames } from "../constants";
 import Sidebar from "../components/Sidebar";
 
 export default function ProfilePage() {
@@ -129,7 +129,7 @@ export default function ProfilePage() {
                     <div>
                       <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{t.name}</div>
                       <div style={{ fontSize: ".8rem", color: "var(--text-muted)", marginTop: ".15rem" }}>
-                        {TYPE_LABEL[t.tournamentType] ?? t.tournamentType}
+                        {eventNames(t)}
                         {t.city ? ` · ${t.city}` : ""}
                       </div>
                     </div>

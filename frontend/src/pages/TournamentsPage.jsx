@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
-import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL } from "../constants";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, eventNames } from "../constants";
 import Sidebar from "../components/Sidebar";
 
 export default function TournamentsPage() {
@@ -110,7 +110,7 @@ function TournamentCard({ t, isOwn, participation, onApply, onWithdraw }) {
       </div>
       <h3 className="t-card-name">{t.name}</h3>
       <div className="t-card-meta">
-        <span>{TYPE_LABEL[t.tournamentType] ?? t.tournamentType}</span>
+        <span>{eventNames(t)}</span>
         {t.club && <span>🏟️ {t.club.name}</span>}
         {t.city && <span>📍 {t.city}</span>}
       </div>

@@ -84,7 +84,9 @@ Services read identity from these headers — never from the raw Authorization h
 
 The most complex service. Located at `tournament-service/src/tournaments/`.
 
-**Tournament lifecycle:** `draft` → `open` → `in_progress` → `completed`
+**Events (F-01):** a tournament holds 1-10 events (Men's Singles, ...). Format, size, seeding, groups and (until F-05) match rules live on the event; entries, matches and groups carry `eventId`. Routes: `/tournaments/:id/events/:eid/...`; the older un-nested routes still work while a tournament has one event.
+
+**Tournament lifecycle:** `draft` → `open` (opens every event) → `in_progress` (as soon as any event is drawn; other events keep taking entries until drawn) → `completed`
 
 **Draw formats implemented:**
 - Single Elimination

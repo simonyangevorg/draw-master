@@ -40,7 +40,7 @@ test('tournament pages show labels, not raw enum values, and an approved/max cou
   await page.getByRole('button', { name: /Continue/ }).click();
   // B-17: unavailable formats aren't offered
   await expect(page.locator('select[name="drawFormat"] option[value="DOUBLE_ELIMINATION"]')).toHaveCount(0);
-  await expect(page.locator('select[name="tournamentType"] option[value="MIXED_DOUBLES"]')).toHaveCount(0);
+  await expect(page.locator('select[name="category"] option[value="MIXED"]')).toHaveCount(0);
   await page.locator('select[name="surface"]').selectOption('HARD_OUTDOOR');
   await page.getByRole('button', { name: /Continue/ }).click();
   await page.getByRole('button', { name: /Continue/ }).click();
@@ -48,7 +48,7 @@ test('tournament pages show labels, not raw enum values, and an approved/max cou
   await page.waitForURL(/\/tournaments\/[0-9a-f-]+$/);
 
   const main = page.locator('main');
-  await expect(main).toContainText('Singles Men');
+  await expect(main).toContainText("Men's Singles");
   await expect(main).toContainText('Hard (Outdoor)');
   await expect(main).not.toContainText(/SINGLES[ _]MEN|HARD_OUTDOOR|SINGLE_ELIMINATION/);
   await expect(main).toContainText('0/16'); // approved/max, not every row

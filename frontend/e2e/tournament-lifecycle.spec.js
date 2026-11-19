@@ -58,7 +58,7 @@ test('register, login, create tournament, open, enroll, generate draw, record sc
   await organiserPage.getByRole('button', { name: 'Generate Draw', exact: true }).first().click();
   await expect(organiserPage.getByRole('alertdialog', { name: 'Confirm draw generation' })).toContainText('2 approved players');
   await organiserPage.getByRole('button', { name: 'Generate draw', exact: true }).click();
-  await expect(organiserPage.getByText('Draw generated successfully!')).toBeVisible();
+  await expect(organiserPage.getByText(/Draw generated for /)).toBeVisible();
 
   await organiserPage.getByRole('button', { name: 'Draw', exact: true }).click();
   const scorableCard = organiserPage.locator('.bk-card-scorable').first();
