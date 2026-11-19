@@ -7,6 +7,7 @@ import { TournamentEntity } from './entities/tournament.entity';
 import { ParticipantEntity } from './entities/participant.entity';
 import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
+import { ClubRefEntity } from './entities/club-ref.entity';
 import { AuditLogger } from '../audit/audit-logger.service';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
@@ -18,12 +19,17 @@ import { AssignSeedDto } from './dto/assign-seed.dto';
 let _id = 0;
 const uid = () => `id-${++_id}`;
 
+/** A caller as the gateway headers describe them (L-06). */
+const actor = (sub: string, clubs: { id: string; role: 'ADMIN' | 'MEMBER' }[] = [], role = 'PLAYER') => ({ sub, role, clubs });
+
 function makeTournament(overrides: Partial<TournamentEntity> = {}): TournamentEntity {
   return Object.assign(
     {
       id: 'tournament-1',
       name: 'Test Open',
-      organiserId: 'organiser-1',
+      createdBy: 'organiser-1',
+      clubId: null,
+      visibility: 'PUBLIC',
       status: 'OPEN',
       drawFormat: 'SINGLE_ELIMINATION',
       maxParticipants: 32,
@@ -89,6 +95,7 @@ describe('TournamentsService', () => {
     save: jest.fn(),
     delete: jest.fn(),
   };
+  const mockClubsRepo = { find: jest.fn().mockResolvedValue([]), findOne: jest.fn().mockResolvedValue(null), save: jest.fn(), create: jest.fn((d) => d) };
   const mockStatsClient = { emit: jest.fn() };
   const mockNotificationsClient = { emit: jest.fn() };
   const mockAuditLogger = { record: jest.fn() };
@@ -105,6 +112,8 @@ describe('TournamentsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     _id = 0;
+    mockClubsRepo.find.mockResolvedValue([]);
+    mockClubsRepo.findOne.mockResolvedValue(null);
     mockQueryRunner.manager.save = mockMatchesRepo.save;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -114,6 +123,7 @@ describe('TournamentsService', () => {
         { provide: getRepositoryToken(ParticipantEntity), useValue: mockParticipantsRepo },
         { provide: getRepositoryToken(TournamentMatchEntity), useValue: mockMatchesRepo },
         { provide: getRepositoryToken(TournamentGroupEntity), useValue: mockGroupsRepo },
+        { provide: getRepositoryToken(ClubRefEntity), useValue: mockClubsRepo },
         { provide: DataSource, useValue: mockDataSource },
         { provide: 'STATS_CLIENT', useValue: mockStatsClient },
         { provide: 'NOTIFICATIONS_CLIENT', useValue: mockNotificationsClient },
@@ -128,14 +138,14 @@ describe('TournamentsService', () => {
 
   describe('findAll (B-21 visibility)', () => {
     const list = () => [
-      makeTournament({ id: 't-open', organiserId: 'someone', status: 'OPEN' }),
-      makeTournament({ id: 't-draft-other', organiserId: 'someone', status: 'DRAFT' }),
-      makeTournament({ id: 't-draft-mine', organiserId: 'me', status: 'DRAFT' }),
-      makeTournament({ id: 't-private', organiserId: 'someone', status: 'OPEN', isPublic: false }),
-      makeTournament({ id: 't-private-entered', organiserId: 'someone', status: 'OPEN', isPublic: false }),
-      makeTournament({ id: 't-done', organiserId: 'someone', status: 'COMPLETED' }),
-      makeTournament({ id: 't-done-entered', organiserId: 'someone', status: 'COMPLETED' }),
-      makeTournament({ id: 't-cancelled', organiserId: 'someone', status: 'CANCELLED' }),
+      makeTournament({ id: 't-open', createdBy: 'someone', status: 'OPEN' }),
+      makeTournament({ id: 't-draft-other', createdBy: 'someone', status: 'DRAFT' }),
+      makeTournament({ id: 't-draft-mine', createdBy: 'me', status: 'DRAFT' }),
+      makeTournament({ id: 't-private', createdBy: 'someone', status: 'OPEN', visibility: 'CLUB' }),
+      makeTournament({ id: 't-private-entered', createdBy: 'someone', status: 'OPEN', visibility: 'CLUB' }),
+      makeTournament({ id: 't-done', createdBy: 'someone', status: 'COMPLETED' }),
+      makeTournament({ id: 't-done-entered', createdBy: 'someone', status: 'COMPLETED' }),
+      makeTournament({ id: 't-cancelled', createdBy: 'someone', status: 'CANCELLED' }),
     ];
     const ids = (r: TournamentEntity[]) => r.map((t) => t.id);
     beforeEach(() => {
@@ -155,11 +165,11 @@ describe('TournamentsService', () => {
     });
 
     it("signed in: also my own drafts and everything I've entered", async () => {
-      expect(ids(await service.findAll('me'))).toEqual(['t-open', 't-draft-mine', 't-private-entered', 't-done-entered']);
+      expect(ids(await service.findAll(actor('me')))).toEqual(['t-open', 't-draft-mine', 't-private-entered', 't-done-entered']);
     });
 
     it("never returns another organiser's DRAFT, even when asked by status", async () => {
-      expect(ids(await service.findAll('me', 'DRAFT'))).toEqual(['t-draft-mine']);
+      expect(ids(await service.findAll(actor('me'), 'DRAFT'))).toEqual(['t-draft-mine']);
     });
 
     it('?status= brings back completed and cancelled tournaments', async () => {
@@ -185,37 +195,103 @@ describe('TournamentsService', () => {
   describe('create', () => {
     const baseDto = {
       name: 'Open',
+      clubId: 'club-a',
       startDate: '2026-07-01',
       endDate: '2026-07-07',
       tournamentType: 'SINGLES_MEN',
       drawFormat: 'SINGLE_ELIMINATION',
       surface: 'CLAY',
     };
+    const ADMIN_A = actor('admin-a', [{ id: 'club-a', role: 'ADMIN' }]);
+    const activeClub = { id: 'club-a', name: 'Club A', slug: 'club-a', status: 'ACTIVE' };
 
-    it('creates tournament with DRAFT status and organiserId', async () => {
-      mockTournamentsRepo.create.mockReturnValue(makeTournament({ status: 'DRAFT' }));
+    beforeEach(() => {
+      mockClubsRepo.findOne.mockResolvedValue(activeClub);
       mockTournamentsRepo.save.mockImplementation(async (t) => t);
+    });
 
-      await service.create(baseDto as any, 'organiser-1');
-
+    it('creates a DRAFT for a club admin, recording who created it', async () => {
+      mockTournamentsRepo.create.mockReturnValue(makeTournament({ status: 'DRAFT' }));
+      await service.create(baseDto as any, ADMIN_A);
       expect(mockTournamentsRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ organiserId: 'organiser-1', status: 'DRAFT' }),
+        expect.objectContaining({ createdBy: 'admin-a', clubId: 'club-a', status: 'DRAFT' }),
       );
     });
 
-    it('applies default values when optional fields are omitted', async () => {
+    it('applies default values when optional fields are omitted (visibility CLUB)', async () => {
       mockTournamentsRepo.create.mockImplementation((data) => data);
-      mockTournamentsRepo.save.mockImplementation(async (t) => t);
-
-      const result = await service.create(baseDto as any, 'organiser-1');
-
+      const result = await service.create(baseDto as any, ADMIN_A);
       expect(result.maxParticipants).toBe(32);
       expect(result.minParticipants).toBe(4);
       expect(result.setsToWin).toBe(2);
       expect(result.gamesPerSet).toBe(6);
       expect(result.seeded).toBe(true);
-      expect(result.isPublic).toBe(true);
+      expect(result.visibility).toBe('CLUB');
       expect(result.requiresApproval).toBe(false);
+      expect((result as any).access).toEqual({ canManage: true, canEnter: true });
+    });
+
+    it.each([
+      ['a plain player', actor('p')],
+      ['a member (not admin) of the club', actor('m', [{ id: 'club-a', role: 'MEMBER' }])],
+      ['an admin of another club', actor('o', [{ id: 'club-b', role: 'ADMIN' }])],
+    ])('refuses %s (403)', async (_, who) => {
+      await expect(service.create(baseDto as any, who)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets the super-admin create for any club', async () => {
+      mockTournamentsRepo.create.mockImplementation((data) => data);
+      await expect(service.create(baseDto as any, actor('boss', [], 'SUPER_ADMIN'))).resolves.toBeTruthy();
+    });
+
+    it('needs a club, and an active one', async () => {
+      await expect(service.create({ ...baseDto, clubId: undefined } as any, ADMIN_A)).rejects.toThrow('Choose the club');
+      mockClubsRepo.findOne.mockResolvedValue({ ...activeClub, status: 'INACTIVE' });
+      await expect(service.create(baseDto as any, ADMIN_A)).rejects.toThrow('not active');
+    });
+  });
+
+  describe('club-scoped management (L-06)', () => {
+    const clubT = () => makeTournament({ clubId: 'club-a', createdBy: 'someone-else', visibility: 'CLUB' } as any);
+
+    it('any admin of the club can manage a tournament someone else created', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(clubT());
+      mockTournamentsRepo.save.mockImplementation(async (t) => t);
+      await expect(service.open('tournament-1', actor('a2', [{ id: 'club-a', role: 'ADMIN' }])))
+        .rejects.toThrow('DRAFT'); // past the access check, stopped by the state check
+    });
+
+    it("an admin of club B can't touch club A's tournament", async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(clubT());
+      await expect(service.open('tournament-1', actor('b', [{ id: 'club-b', role: 'ADMIN' }]))).rejects.toThrow(ForbiddenException);
+    });
+
+    it("a non-member can't read a CLUB tournament (404, so it doesn't leak)", async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(clubT());
+      await expect(service.findOne('tournament-1', actor('outsider'))).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('tournament-1', null)).rejects.toThrow(NotFoundException);
+    });
+
+    it('a member reads it, and is told they cannot manage it', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(clubT());
+      const t: any = await service.findOne('tournament-1', actor('m', [{ id: 'club-a', role: 'MEMBER' }]));
+      expect(t.access).toEqual({ canManage: false, canEnter: true });
+    });
+
+    it("an inactive club's tournament disappears for members", async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(clubT());
+      mockClubsRepo.findOne.mockResolvedValue({ id: 'club-a', name: 'A', slug: 'a', status: 'INACTIVE' });
+      await expect(service.findOne('tournament-1', actor('m', [{ id: 'club-a', role: 'MEMBER' }]))).rejects.toThrow(NotFoundException);
+    });
+
+    it("a non-member can't enter a CLUB tournament", async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(clubT());
+      await expect(service.enroll('tournament-1', { playerId: 'outsider' }, actor('outsider'))).rejects.toThrow('members of its club');
+    });
+
+    it('club.upserted keeps the local club copy current', async () => {
+      await service.upsertClub({ id: 'club-a', name: 'Club A', slug: 'club-a', status: 'INACTIVE' });
+      expect(mockClubsRepo.save).toHaveBeenCalledWith({ id: 'club-a', name: 'Club A', slug: 'club-a', status: 'INACTIVE' });
     });
   });
 
@@ -225,7 +301,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t);
       mockTournamentsRepo.save.mockImplementation(async (x) => x);
 
-      await service.update('tournament-1', { name: 'Updated' }, 'organiser-1');
+      await service.update('tournament-1', { name: 'Updated' }, actor('organiser-1'));
 
       expect(mockTournamentsRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Updated' }),
@@ -235,14 +311,14 @@ describe('TournamentsService', () => {
     it('throws ForbiddenException when requester is not the organiser', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
-      await expect(service.update('tournament-1', {}, 'other')).rejects.toThrow(ForbiddenException);
+      await expect(service.update('tournament-1', {}, actor('other'))).rejects.toThrow(ForbiddenException);
     });
 
     it('refuses format changes once the tournament is OPEN', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'OPEN' } as any));
 
       await expect(
-        service.update('tournament-1', { drawFormat: 'ROUND_ROBIN' }, 'organiser-1'),
+        service.update('tournament-1', { drawFormat: 'ROUND_ROBIN' }, actor('organiser-1')),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -250,7 +326,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' } as any));
       mockTournamentsRepo.save.mockImplementation(async (x) => x);
 
-      await service.update('tournament-1', { drawFormat: 'ROUND_ROBIN' }, 'organiser-1');
+      await service.update('tournament-1', { drawFormat: 'ROUND_ROBIN' }, actor('organiser-1'));
 
       expect(mockTournamentsRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ drawFormat: 'ROUND_ROBIN' }),
@@ -261,7 +337,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' } as any));
 
       await expect(
-        service.update('tournament-1', { name: 'x' }, 'organiser-1'),
+        service.update('tournament-1', { name: 'x' }, actor('organiser-1')),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -269,7 +345,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' } as any));
 
       await expect(
-        service.update('tournament-1', { startDate: '2026-06-10', endDate: '2026-06-01' }, 'organiser-1'),
+        service.update('tournament-1', { startDate: '2026-06-10', endDate: '2026-06-01' }, actor('organiser-1')),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -280,7 +356,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t);
       mockTournamentsRepo.remove.mockResolvedValue(undefined);
 
-      await service.remove('tournament-1', 'organiser-1');
+      await service.remove('tournament-1', actor('organiser-1'));
 
       expect(mockTournamentsRepo.remove).toHaveBeenCalledWith(t);
     });
@@ -288,13 +364,13 @@ describe('TournamentsService', () => {
     it('throws ForbiddenException when requester is not the organiser', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
-      await expect(service.remove('tournament-1', 'other')).rejects.toThrow(ForbiddenException);
+      await expect(service.remove('tournament-1', actor('other'))).rejects.toThrow(ForbiddenException);
     });
 
     it('throws BadRequestException when the tournament is IN_PROGRESS', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' }));
 
-      await expect(service.remove('tournament-1', 'organiser-1')).rejects.toThrow(BadRequestException);
+      await expect(service.remove('tournament-1', actor('organiser-1'))).rejects.toThrow(BadRequestException);
       expect(mockTournamentsRepo.remove).not.toHaveBeenCalled();
     });
 
@@ -303,7 +379,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t);
       mockTournamentsRepo.remove.mockResolvedValue(undefined);
 
-      await service.remove('tournament-1', 'organiser-1');
+      await service.remove('tournament-1', actor('organiser-1'));
 
       expect(mockTournamentsRepo.remove).toHaveBeenCalledWith(t);
     });
@@ -315,7 +391,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t);
       mockTournamentsRepo.save.mockImplementation(async (x) => x);
 
-      const result = await service.open('tournament-1', 'organiser-1');
+      const result = await service.open('tournament-1', actor('organiser-1'));
 
       expect(result.status).toBe('OPEN');
     });
@@ -323,7 +399,7 @@ describe('TournamentsService', () => {
     it('throws ForbiddenException for non-organiser', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' }));
 
-      await expect(service.open('tournament-1', 'other')).rejects.toThrow(ForbiddenException);
+      await expect(service.open('tournament-1', actor('other'))).rejects.toThrow(ForbiddenException);
     });
 
     it.each(['OPEN', 'IN_PROGRESS', 'COMPLETED'])(
@@ -331,7 +407,7 @@ describe('TournamentsService', () => {
       async (status) => {
         mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: status as any }));
 
-        await expect(service.open('tournament-1', 'organiser-1')).rejects.toThrow(BadRequestException);
+        await expect(service.open('tournament-1', actor('organiser-1'))).rejects.toThrow(BadRequestException);
         expect(mockTournamentsRepo.save).not.toHaveBeenCalled();
       },
     );
@@ -343,14 +419,14 @@ describe('TournamentsService', () => {
     it('throws BadRequestException when tournament is not OPEN', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' }));
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'p1')).rejects.toThrow(BadRequestException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, actor('p1'))).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when tournament is full', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 4 }));
       mockParticipantsRepo.count.mockResolvedValue(4);
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'p1')).rejects.toThrow(BadRequestException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, actor('p1'))).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when player is already enrolled', async () => {
@@ -358,7 +434,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.count.mockResolvedValue(0);
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant());
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'p1')).rejects.toThrow(BadRequestException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, actor('p1'))).rejects.toThrow(BadRequestException);
     });
 
     it('sets status to APPROVED when requiresApproval is false', async () => {
@@ -368,7 +444,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.create.mockImplementation((data) => data);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.enroll('tournament-1', { playerId: 'p1' }, 'p1');
+      const result = await service.enroll('tournament-1', { playerId: 'p1' }, actor('p1'));
 
       expect(result.status).toBe('APPROVED');
     });
@@ -380,7 +456,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.create.mockImplementation((data) => data);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.enroll('tournament-1', { playerId: 'p1' }, 'p1');
+      const result = await service.enroll('tournament-1', { playerId: 'p1' }, actor('p1'));
 
       expect(result.status).toBe('PENDING');
     });
@@ -388,17 +464,17 @@ describe('TournamentsService', () => {
     it('throws ForbiddenException when requester enrolls a different player', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
-      await expect(service.enroll('tournament-1', { playerId: 'p1' }, 'someone-else')).rejects.toThrow(ForbiddenException);
+      await expect(service.enroll('tournament-1', { playerId: 'p1' }, actor('someone-else'))).rejects.toThrow(ForbiddenException);
     });
 
     it('allows the tournament organiser to enroll another player', async () => {
-      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ organiserId: 'organiser-1' }));
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ createdBy: 'organiser-1' }));
       mockParticipantsRepo.count.mockResolvedValue(0);
       mockParticipantsRepo.findOne.mockResolvedValue(null);
       mockParticipantsRepo.create.mockImplementation((data) => data);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.enroll('tournament-1', { playerId: 'p1' }, 'organiser-1');
+      const result = await service.enroll('tournament-1', { playerId: 'p1' }, actor('organiser-1'));
 
       expect(result.status).toBe('APPROVED');
     });
@@ -411,7 +487,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.approveParticipant('tournament-1', participant.id, 'organiser-1');
+      const result = await service.approveParticipant('tournament-1', participant.id, actor('organiser-1'));
 
       expect(result.status).toBe('APPROVED');
     });
@@ -420,7 +496,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
       await expect(
-        service.approveParticipant('tournament-1', 'p', 'other'),
+        service.approveParticipant('tournament-1', 'p', actor('other')),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -429,7 +505,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.approveParticipant('tournament-1', 'missing', 'organiser-1'),
+        service.approveParticipant('tournament-1', 'missing', actor('organiser-1')),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -441,7 +517,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.rejectParticipant('tournament-1', participant.id, 'organiser-1');
+      const result = await service.rejectParticipant('tournament-1', participant.id, actor('organiser-1'));
 
       expect(result.status).toBe('REJECTED');
     });
@@ -450,7 +526,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
       await expect(
-        service.rejectParticipant('tournament-1', 'p', 'other'),
+        service.rejectParticipant('tournament-1', 'p', actor('other')),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -462,7 +538,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.withdrawParticipant('tournament-1', participant.id, 'organiser-1');
+      const result = await service.withdrawParticipant('tournament-1', participant.id, actor('organiser-1'));
 
       expect(result.status).toBe('WITHDRAWN');
     });
@@ -473,7 +549,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
 
       await expect(
-        service.withdrawParticipant('tournament-1', participant.id, 'other-organiser'),
+        service.withdrawParticipant('tournament-1', participant.id, actor('other-organiser')),
       ).rejects.toThrow(ForbiddenException);
       expect(mockParticipantsRepo.save).not.toHaveBeenCalled();
     });
@@ -484,7 +560,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.withdrawParticipant('tournament-1', participant.id, 'player-1');
+      const result = await service.withdrawParticipant('tournament-1', participant.id, actor('player-1'));
 
       expect(result.status).toBe('WITHDRAWN');
     });
@@ -495,7 +571,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
 
       await expect(
-        service.withdrawParticipant('tournament-1', participant.id, 'player-1'),
+        service.withdrawParticipant('tournament-1', participant.id, actor('player-1')),
       ).rejects.toThrow(ForbiddenException);
     });
 
@@ -504,7 +580,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.withdrawParticipant('tournament-1', 'missing', 'organiser-1'),
+        service.withdrawParticipant('tournament-1', 'missing', actor('organiser-1')),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -516,7 +592,7 @@ describe('TournamentsService', () => {
       mockParticipantsRepo.findOne.mockResolvedValue(participant);
       mockParticipantsRepo.save.mockImplementation(async (p) => p);
 
-      const result = await service.assignSeed('tournament-1', participant.id, 3, 'organiser-1');
+      const result = await service.assignSeed('tournament-1', participant.id, 3, actor('organiser-1'));
 
       expect(result.seed).toBe(3);
     });
@@ -525,7 +601,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
       await expect(
-        service.assignSeed('tournament-1', 'p', 1, 'other'),
+        service.assignSeed('tournament-1', 'p', 1, actor('other')),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -536,13 +612,13 @@ describe('TournamentsService', () => {
     it('throws ForbiddenException when requester is not the organiser', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
-      await expect(service.generateDraw('tournament-1', 'other')).rejects.toThrow(ForbiddenException);
+      await expect(service.generateDraw('tournament-1', actor('other'))).rejects.toThrow(ForbiddenException);
     });
 
     it('throws BadRequestException when tournament is not OPEN', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' }));
 
-      await expect(service.generateDraw('tournament-1', 'organiser-1')).rejects.toThrow(BadRequestException);
+      await expect(service.generateDraw('tournament-1', actor('organiser-1'))).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when approved participant count is below minimum', async () => {
@@ -551,7 +627,7 @@ describe('TournamentsService', () => {
       mockMatchesRepo.delete.mockResolvedValue(undefined);
       mockGroupsRepo.delete.mockResolvedValue(undefined);
 
-      await expect(service.generateDraw('tournament-1', 'organiser-1')).rejects.toThrow(BadRequestException);
+      await expect(service.generateDraw('tournament-1', actor('organiser-1'))).rejects.toThrow(BadRequestException);
     });
 
     it('sets tournament status to IN_PROGRESS after draw generation', async () => {
@@ -563,7 +639,7 @@ describe('TournamentsService', () => {
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       mockTournamentsRepo.update.mockResolvedValue(undefined);
 
-      const result = await service.generateDraw('tournament-1', 'organiser-1');
+      const result = await service.generateDraw('tournament-1', actor('organiser-1'));
 
       expect(mockTournamentsRepo.update).toHaveBeenCalledWith('tournament-1', { status: 'IN_PROGRESS' });
       expect(result.tournament.status).toBe('IN_PROGRESS');
@@ -578,7 +654,7 @@ describe('TournamentsService', () => {
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       mockTournamentsRepo.update.mockResolvedValue(undefined);
 
-      await service.generateDraw('tournament-1', 'organiser-1');
+      await service.generateDraw('tournament-1', actor('organiser-1'));
 
       expect(mockMatchesRepo.delete).toHaveBeenCalledWith({ tournamentId: 'tournament-1' });
       expect(mockGroupsRepo.delete).toHaveBeenCalledWith({ tournamentId: 'tournament-1' });
@@ -596,7 +672,7 @@ describe('TournamentsService', () => {
       mockGroupsRepo.delete.mockResolvedValue(undefined);
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       mockTournamentsRepo.update.mockResolvedValue(undefined);
-      return service.generateDraw('tournament-1', 'organiser-1');
+      return service.generateDraw('tournament-1', actor('organiser-1'));
     };
 
     it('creates 3 matches for 4 players (2 in R1, 1 Final)', async () => {
@@ -675,7 +751,7 @@ describe('TournamentsService', () => {
       mockGroupsRepo.delete.mockResolvedValue(undefined);
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       mockTournamentsRepo.update.mockResolvedValue(undefined);
-      return service.generateDraw('tournament-1', 'organiser-1');
+      return service.generateDraw('tournament-1', actor('organiser-1'));
     };
 
     it('creates n*(n-1)/2 matches for n participants', async () => {
@@ -735,7 +811,7 @@ describe('TournamentsService', () => {
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       mockTournamentsRepo.update.mockResolvedValue(undefined);
 
-      return service.generateDraw('tournament-1', 'organiser-1');
+      return service.generateDraw('tournament-1', actor('organiser-1'));
     };
 
     it('creates the correct number of groups', async () => {
@@ -797,7 +873,7 @@ describe('TournamentsService', () => {
       await service.swapParticipants(
         'tournament-1',
         { participantId1: 'pA', participantId2: 'pB' },
-        'organiser-1',
+        actor('organiser-1'),
       );
 
       expect(mockMatchesRepo.save).toHaveBeenCalledTimes(1);
@@ -821,7 +897,7 @@ describe('TournamentsService', () => {
       await service.swapParticipants(
         'tournament-1',
         { participantId1: 'pA', participantId2: 'pB' },
-        'organiser-1',
+        actor('organiser-1'),
       );
 
       expect(mockMatchesRepo.save).toHaveBeenCalledTimes(1);
@@ -832,7 +908,7 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
 
       await expect(
-        service.swapParticipants('tournament-1', { participantId1: 'a', participantId2: 'b' }, 'other'),
+        service.swapParticipants('tournament-1', { participantId1: 'a', participantId2: 'b' }, actor('other')),
       ).rejects.toThrow(ForbiddenException);
     });
   });
@@ -859,7 +935,7 @@ describe('TournamentsService', () => {
     it('sets participant1Id and status SCHEDULED when both slots become filled', async () => {
       setup({ participant2Id: 'pB' });
 
-      const result = await service.updateDrawSlot('tournament-1', 'm1', 'participant1Id', 'pA', 'organiser-1');
+      const result = await service.updateDrawSlot('tournament-1', 'm1', 'participant1Id', 'pA', actor('organiser-1'));
 
       expect(result.participant1Id).toBe('pA');
       expect(result.status).toBe('SCHEDULED');
@@ -868,7 +944,7 @@ describe('TournamentsService', () => {
     it('sets status BYE when only participant1Id is set', async () => {
       setup();
 
-      const result = await service.updateDrawSlot('tournament-1', 'm1', 'participant1Id', 'pA', 'organiser-1');
+      const result = await service.updateDrawSlot('tournament-1', 'm1', 'participant1Id', 'pA', actor('organiser-1'));
 
       expect(result.status).toBe('BYE');
     });
@@ -877,7 +953,7 @@ describe('TournamentsService', () => {
       setup();
 
       await expect(
-        service.updateDrawSlot('tournament-1', 'm1', 'badSlot', 'pA', 'organiser-1'),
+        service.updateDrawSlot('tournament-1', 'm1', 'badSlot', 'pA', actor('organiser-1')),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -886,7 +962,7 @@ describe('TournamentsService', () => {
       mockMatchesRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.updateDrawSlot('tournament-1', 'missing', 'participant1Id', 'pA', 'organiser-1'),
+        service.updateDrawSlot('tournament-1', 'missing', 'participant1Id', 'pA', actor('organiser-1')),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -897,7 +973,7 @@ describe('TournamentsService', () => {
     const tomorrow = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
     const later = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
     const base = () => ({
-      name: 'Spring Open', startDate: tomorrow(), endDate: later(3),
+      name: 'Spring Open', clubId: '0b6f3a52-5d0e-4c55-9a43-3f0c2f7d9a10', startDate: tomorrow(), endDate: later(3),
       tournamentType: 'SINGLES_MEN', drawFormat: 'SINGLE_ELIMINATION', surface: 'CLAY',
     });
     const errorsFor = async (cls: any, body: any) => {
@@ -950,15 +1026,15 @@ describe('TournamentsService', () => {
 
     it('rejects an endDate before the stored startDate', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t());
-      await expect(service.update('tournament-1', { endDate: '2099-05-01' }, 'organiser-1')).rejects.toThrow('endDate');
+      await expect(service.update('tournament-1', { endDate: '2099-05-01' }, actor('organiser-1'))).rejects.toThrow('endDate');
     });
     it('rejects a deadline after the stored startDate', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t());
-      await expect(service.update('tournament-1', { registrationDeadline: '2099-05-11' }, 'organiser-1')).rejects.toThrow('registrationDeadline');
+      await expect(service.update('tournament-1', { registrationDeadline: '2099-05-11' }, actor('organiser-1'))).rejects.toThrow('registrationDeadline');
     });
     it('rejects a minimum above the stored maximum', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(t());
-      await expect(service.update('tournament-1', { minParticipants: 16 }, 'organiser-1')).rejects.toThrow('minParticipants');
+      await expect(service.update('tournament-1', { minParticipants: 16 }, actor('organiser-1'))).rejects.toThrow('minParticipants');
     });
   });
 
@@ -972,16 +1048,16 @@ describe('TournamentsService', () => {
 
     it('refuses a player entering after the deadline', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ registrationDeadline: '2020-01-01' } as any));
-      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, 'player-1')).rejects.toThrow('Registration closed');
+      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, actor('player-1'))).rejects.toThrow('Registration closed');
     });
     it('still lets the organiser add a late entry', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ registrationDeadline: '2020-01-01' } as any));
-      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, 'organiser-1')).resolves.toBeTruthy();
+      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, actor('organiser-1'))).resolves.toBeTruthy();
     });
     it('accepts entries on the deadline day itself', async () => {
       const today = new Date().toISOString().slice(0, 10);
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ registrationDeadline: today } as any));
-      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, 'player-1')).resolves.toBeTruthy();
+      await expect(service.enroll('tournament-1', { playerId: 'player-1' }, actor('player-1'))).resolves.toBeTruthy();
     });
   });
 
@@ -994,20 +1070,20 @@ describe('TournamentsService', () => {
     it.each(['APPROVED', 'REJECTED', 'WITHDRAWN'])('cannot approve an entry that is %s', async (status) => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: status as any }));
-      await expect(service.approveParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('Only a pending entry');
+      await expect(service.approveParticipant('tournament-1', 'p', actor('organiser-1'))).rejects.toThrow('Only a pending entry');
     });
 
     it.each(['APPROVED', 'REJECTED', 'WITHDRAWN'])('cannot reject an entry that is %s', async (status) => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: status as any }));
-      await expect(service.rejectParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('Only a pending entry');
+      await expect(service.rejectParticipant('tournament-1', 'p', actor('organiser-1'))).rejects.toThrow('Only a pending entry');
     });
 
     it('refuses the 9th approval for 8 places', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 8 }));
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: 'PENDING' }));
       mockParticipantsRepo.count.mockResolvedValue(8);
-      await expect(service.approveParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('full (8/8');
+      await expect(service.approveParticipant('tournament-1', 'p', actor('organiser-1'))).rejects.toThrow('full (8/8');
       expect(mockParticipantsRepo.save).not.toHaveBeenCalled();
     });
 
@@ -1015,14 +1091,14 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 8 }));
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: 'PENDING' }));
       mockParticipantsRepo.count.mockResolvedValue(7);
-      expect((await service.approveParticipant('tournament-1', 'p', 'organiser-1')).status).toBe('APPROVED');
+      expect((await service.approveParticipant('tournament-1', 'p', actor('organiser-1'))).status).toBe('APPROVED');
     });
 
     it('no approve or reject after the draw', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' }));
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ status: 'PENDING' }));
-      await expect(service.approveParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('locked');
-      await expect(service.rejectParticipant('tournament-1', 'p', 'organiser-1')).rejects.toThrow('locked');
+      await expect(service.approveParticipant('tournament-1', 'p', actor('organiser-1'))).rejects.toThrow('locked');
+      await expect(service.rejectParticipant('tournament-1', 'p', actor('organiser-1'))).rejects.toThrow('locked');
     });
   });
 
@@ -1032,28 +1108,28 @@ describe('TournamentsService', () => {
     it('rejects a seed above the entry maximum', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ maxParticipants: 8 }));
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA' }));
-      await expect(service.assignSeed('tournament-1', 'pA', 9, 'organiser-1')).rejects.toThrow('between 1 and 8');
+      await expect(service.assignSeed('tournament-1', 'pA', 9, actor('organiser-1'))).rejects.toThrow('between 1 and 8');
     });
     it('rejects a seed another entry already holds', async () => {
       const other = makeParticipant({ id: 'pB', seed: 2 });
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ participants: [other] }));
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA' }));
-      await expect(service.assignSeed('tournament-1', 'pA', 2, 'organiser-1')).rejects.toThrow('already taken');
+      await expect(service.assignSeed('tournament-1', 'pA', 2, actor('organiser-1'))).rejects.toThrow('already taken');
     });
     it("ignores a withdrawn entry's old seed", async () => {
       const other = makeParticipant({ id: 'pB', seed: 2, status: 'WITHDRAWN' });
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ participants: [other] }));
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA' }));
-      expect((await service.assignSeed('tournament-1', 'pA', 2, 'organiser-1')).seed).toBe(2);
+      expect((await service.assignSeed('tournament-1', 'pA', 2, actor('organiser-1'))).seed).toBe(2);
     });
     it('is locked after the draw', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'IN_PROGRESS' }));
-      await expect(service.assignSeed('tournament-1', 'pA', 1, 'organiser-1')).rejects.toThrow('locked');
+      await expect(service.assignSeed('tournament-1', 'pA', 1, actor('organiser-1'))).rejects.toThrow('locked');
     });
     it('null clears the seed', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockParticipantsRepo.findOne.mockResolvedValue(makeParticipant({ id: 'pA', seed: 3 }));
-      expect((await service.assignSeed('tournament-1', 'pA', null, 'organiser-1')).seed).toBeNull();
+      expect((await service.assignSeed('tournament-1', 'pA', null, actor('organiser-1'))).seed).toBeNull();
     });
   });
 
@@ -1064,7 +1140,7 @@ describe('TournamentsService', () => {
     ])('%o → 400, and the old draw is left alone', async (overrides, msg) => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament(overrides as any));
       mockParticipantsRepo.find.mockResolvedValue([1, 2, 3, 4].map(() => makeParticipant()));
-      await expect(service.generateDraw('tournament-1', 'organiser-1')).rejects.toThrow(msg);
+      await expect(service.generateDraw('tournament-1', actor('organiser-1'))).rejects.toThrow(msg);
       expect(mockMatchesRepo.delete).not.toHaveBeenCalled();
     });
   });
@@ -1080,7 +1156,7 @@ describe('TournamentsService', () => {
       mockGroupsRepo.save.mockImplementation(async (x) => x);
       mockParticipantsRepo.save.mockImplementation(async (x) => x);
       mockMatchesRepo.save.mockImplementation(async (x) => x);
-      return service.generateDraw('tournament-1', 'organiser-1');
+      return service.generateDraw('tournament-1', actor('organiser-1'));
     };
     const ko = (matches: TournamentMatchEntity[]) => matches.filter((m) => m.stage === 'KNOCKOUT');
 
@@ -1127,7 +1203,7 @@ describe('TournamentsService', () => {
     it('swap → 400', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockMatchesRepo.find.mockResolvedValue(played);
-      await expect(service.swapParticipants('tournament-1', { participantId1: 'pC', participantId2: 'pD' }, 'organiser-1'))
+      await expect(service.swapParticipants('tournament-1', { participantId1: 'pC', participantId2: 'pD' }, actor('organiser-1')))
         .rejects.toThrow('locked');
       expect(mockMatchesRepo.save).not.toHaveBeenCalled();
     });
@@ -1135,13 +1211,13 @@ describe('TournamentsService', () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockMatchesRepo.findOne.mockResolvedValue(played[1]);
       mockMatchesRepo.find.mockResolvedValue(played);
-      await expect(service.updateDrawSlot('tournament-1', 'm2', 'participant1Id', null, 'organiser-1')).rejects.toThrow('locked');
+      await expect(service.updateDrawSlot('tournament-1', 'm2', 'participant1Id', null, actor('organiser-1'))).rejects.toThrow('locked');
     });
     it('BYEs alone do not lock the draw', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockMatchesRepo.find.mockResolvedValue([{ id: 'b', status: 'BYE', participant1Id: 'pA', winnerId: 'pA' }] as any);
       mockMatchesRepo.save.mockImplementation(async (m) => m);
-      await expect(service.swapParticipants('tournament-1', { participantId1: 'pA', participantId2: 'pZ' }, 'organiser-1'))
+      await expect(service.swapParticipants('tournament-1', { participantId1: 'pA', participantId2: 'pZ' }, actor('organiser-1')))
         .resolves.toBeDefined();
     });
   });
@@ -1186,7 +1262,7 @@ describe('TournamentsService', () => {
       mockMatchesRepo.save.mockImplementation(async (m) => m);
       return { tournament, match };
     };
-    const score = (dto: any) => service.updateMatch('tournament-1', 'match-1', dto, 'organiser-1');
+    const score = (dto: any) => service.updateMatch('tournament-1', 'match-1', dto, actor('organiser-1'));
     const savedNext = () => mockMatchesRepo.save.mock.calls.find((c) => c[0].id === 'match-next')?.[0];
 
     it('sets the status without recording a result', async () => {
@@ -1347,13 +1423,13 @@ describe('TournamentsService', () => {
 
     it('throws ForbiddenException for non-organiser', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
-      await expect(service.updateMatch('tournament-1', 'match-1', {}, 'other')).rejects.toThrow(ForbiddenException);
+      await expect(service.updateMatch('tournament-1', 'match-1', {}, actor('other'))).rejects.toThrow(ForbiddenException);
     });
 
     it('throws NotFoundException when match does not exist', async () => {
       mockTournamentsRepo.findOne.mockResolvedValue(makeTournament());
       mockMatchesRepo.findOne.mockResolvedValue(null);
-      await expect(service.updateMatch('tournament-1', 'missing', {}, 'organiser-1')).rejects.toThrow(NotFoundException);
+      await expect(service.updateMatch('tournament-1', 'missing', {}, actor('organiser-1'))).rejects.toThrow(NotFoundException);
     });
   });
 });

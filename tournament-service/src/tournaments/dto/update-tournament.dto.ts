@@ -14,7 +14,7 @@ export const FORMAT_FIELDS = [
 
 /**
  * What an owner may change with PATCH /tournaments/:id. Deliberately has no
- * status, organiserId, clubId or id: the lifecycle moves through dedicated
+ * status, createdBy, clubId or id: the lifecycle moves through dedicated
  * endpoints (open, draw, ...) and ownership is never transferable this way.
  * The controller validates with forbidNonWhitelisted, so sending any of those
  * fields is a 400 rather than being silently applied.
@@ -101,8 +101,8 @@ export class UpdateTournamentDto {
   seeded?: boolean;
 
   @IsOptional()
-  @IsBoolean()
-  isPublic?: boolean;
+  @IsIn(['CLUB', 'PUBLIC'])
+  visibility?: 'CLUB' | 'PUBLIC';
 
   @IsOptional()
   @IsBoolean()

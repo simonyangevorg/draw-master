@@ -1,6 +1,6 @@
 import {
   IsString, IsOptional, IsBoolean, IsInt, IsNumber,
-  IsIn, IsDateString, IsNotEmpty, MaxLength, Min, Max,
+  IsIn, IsDateString, IsNotEmpty, IsUUID, MaxLength, Min, Max,
 } from 'class-validator';
 import {
   Trim, IsNotPastDate, IsOnOrAfterField, IsOnOrBeforeField, IsAtMostField,
@@ -30,9 +30,9 @@ export class CreateTournamentDto {
   @MaxLength(2000)
   description?: string;
 
-  @IsOptional()
-  @IsString()
-  clubId?: string;
+  /** Required: the club this tournament belongs to (the caller must be its admin). */
+  @IsUUID()
+  clubId: string;
 
   @IsOptional()
   @Trim()
@@ -96,8 +96,8 @@ export class CreateTournamentDto {
   seeded?: boolean;
 
   @IsOptional()
-  @IsBoolean()
-  isPublic?: boolean;
+  @IsIn(['CLUB', 'PUBLIC'])
+  visibility?: 'CLUB' | 'PUBLIC';
 
   @IsOptional()
   @IsBoolean()

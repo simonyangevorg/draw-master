@@ -16,6 +16,8 @@ import { EnrollParticipantDto } from './dto/enroll-participant.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
 import { AuditLogger } from '../audit/audit-logger.service';
+import { ClubRefEntity } from './entities/club-ref.entity';
+import { Actor, canEnter, canManage, canRead, isSuperAdmin, isClubAdmin } from './access';
 
 const GROUP_LETTERS = 'ABCDEFGH';
 
@@ -30,6 +32,8 @@ export class TournamentsService {
     private readonly matchesRepo: Repository<TournamentMatchEntity>,
     @InjectRepository(TournamentGroupEntity)
     private readonly groupsRepo: Repository<TournamentGroupEntity>,
+    @InjectRepository(ClubRefEntity)
+    private readonly clubsRepo: Repository<ClubRefEntity>,
     @Inject('STATS_CLIENT')
     private readonly statsClient: ClientProxy,
     @Inject('NOTIFICATIONS_CLIENT')
@@ -41,54 +45,90 @@ export class TournamentsService {
   // ── CRUD ──────────────────────────────────
 
   /**
-   * The tournament list, filtered for whoever is asking (B-21; club-scoped
-   * visibility replaces this in L-06):
-   * - your own tournaments, and ones you've entered, are always listed;
-   * - other people's DRAFTs and non-public tournaments are never listed;
-   * - COMPLETED and CANCELLED ones are left out unless ?status= asks for them.
+   * The tournament list, filtered for whoever is asking (L-06, replacing the
+   * B-21 interim rules):
+   * - managers (super-admin, the club's admins) see all their tournaments;
+   * - everyone else sees what canRead allows: no DRAFTs, no tournaments of an
+   *   INACTIVE club, CLUB tournaments only for members or entrants;
+   * - COMPLETED and CANCELLED ones are left out unless the caller manages or
+   *   entered them, or ?status= asks for them.
    * `status` is a comma-separated list of statuses to restrict to.
+   * Each row says what the caller may do with it (`access`).
    */
-  async findAll(requesterId?: string, status?: string) {
+  async findAll(actor?: Actor | null, status?: string) {
     const all = await this.tournamentsRepo.find({ order: { createdAt: 'DESC' } });
     const wanted = status
       ? new Set(status.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean))
       : null;
-    const entered = requesterId
-      ? new Set((await this.participantsRepo.find({ where: { playerId: requesterId } })).map((p) => p.tournamentId))
+    const entered = actor
+      ? new Set((await this.participantsRepo.find({ where: { playerId: actor.sub } })).map((p) => p.tournamentId))
       : new Set<string>();
-    return all.filter((t) => {
-      const own = !!requesterId && t.organiserId === requesterId;
-      const involved = own || entered.has(t.id);
-      if (wanted) {
-        if (!wanted.has(t.status)) return false;
-      } else if (!involved && (t.status === 'COMPLETED' || t.status === 'CANCELLED')) {
-        return false;
-      }
-      if (own) return true;
-      if (t.status === 'DRAFT') return false;
-      return t.isPublic !== false || entered.has(t.id);
+    const clubs = new Map((await this.clubsRepo.find()).map((c) => [c.id, c]));
+    return all
+      .filter((t) => {
+        const manager = canManage(actor, t);
+        const involved = manager || entered.has(t.id);
+        if (wanted) {
+          if (!wanted.has(t.status)) return false;
+        } else if (!involved && (t.status === 'COMPLETED' || t.status === 'CANCELLED')) {
+          return false;
+        }
+        return canRead(actor, t, { entered: entered.has(t.id), clubActive: clubs.get(t.clubId)?.status !== 'INACTIVE' });
+      })
+      .map((t) => this.present(t, actor, clubs.get(t.clubId)));
+  }
+
+  /** One tournament, if the caller may see it (404 otherwise, so drafts don't leak). */
+  async findOne(id: string, actor?: Actor | null) {
+    const t = await this.load(id);
+    const club = t.clubId ? await this.clubsRepo.findOne({ where: { id: t.clubId } }) : null;
+    const entered = !!actor && (t.participants ?? []).some((p) => p.playerId === actor.sub);
+    if (!canRead(actor, t, { entered, clubActive: club?.status !== 'INACTIVE' })) {
+      throw new NotFoundException('Tournament not found');
+    }
+    return this.present(t, actor, club);
+  }
+
+  /** Read-checked participants and draw, for the public GET routes. */
+  async getParticipants(tournamentId: string, actor?: Actor | null) {
+    return (await this.findOne(tournamentId, actor)).participants;
+  }
+
+  async getDraw(tournamentId: string, actor?: Actor | null) {
+    await this.findOne(tournamentId, actor);
+    return this.matchesRepo.find({ where: { tournamentId }, order: { round: 'ASC', position: 'ASC' } });
+  }
+
+  /** Adds the club's name and what this caller may do; the UI reads `access`, never ids. */
+  private present(t: TournamentEntity, actor: Actor | null | undefined, club?: ClubRefEntity | null) {
+    const clubActive = club?.status !== 'INACTIVE';
+    return Object.assign(t, {
+      club: club ? { id: club.id, name: club.name, slug: club.slug } : null,
+      access: { canManage: canManage(actor, t), canEnter: canEnter(actor, t, { clubActive }) },
     });
   }
 
-  async findOne(id: string) {
-    const t = await this.tournamentsRepo.findOne({
-      where: { id },
-      relations: ['participants', 'matches', 'groups'],
-    });
-    if (!t) throw new NotFoundException('Tournament not found');
-    return t;
-  }
-
-  async create(dto: CreateTournamentDto, organiserId: string): Promise<TournamentEntity> {
+  /**
+   * Creating needs an active club the caller is an admin of (the super-admin
+   * may create for any club). Visibility defaults to CLUB (L-06).
+   */
+  async create(dto: CreateTournamentDto, actor: Actor): Promise<TournamentEntity> {
+    if (!dto.clubId) throw new BadRequestException('Choose the club this tournament belongs to');
+    if (!isSuperAdmin(actor) && !isClubAdmin(actor, dto.clubId)) {
+      throw new ForbiddenException('Only an admin of this club can create its tournaments');
+    }
+    const club = await this.clubsRepo.findOne({ where: { id: dto.clubId } });
+    if (!club) throw new BadRequestException('Unknown club');
+    if (club.status === 'INACTIVE') throw new BadRequestException(`${club.name} is not active`);
     const t = this.tournamentsRepo.create({
       ...(dto as any),
-      organiserId,
+      createdBy: actor.sub,
       status: 'DRAFT',
       maxParticipants: dto.maxParticipants ?? 32,
       minParticipants: dto.minParticipants ?? 4,
       ageGroup: (dto.ageGroup ?? 'OPEN') as any,
       seeded: dto.seeded ?? true,
-      isPublic: dto.isPublic ?? true,
+      visibility: dto.visibility ?? 'CLUB',
       requiresApproval: dto.requiresApproval ?? false,
       setsToWin: dto.setsToWin ?? 2,
       gamesPerSet: dto.gamesPerSet ?? 6,
@@ -96,12 +136,22 @@ export class TournamentsService {
       finalSetTiebreak: dto.finalSetTiebreak ?? false,
       noAd: dto.noAd ?? false,
     } as any) as unknown as TournamentEntity;
-    return this.tournamentsRepo.save(t);
+    const saved = await this.tournamentsRepo.save(t);
+    this.auditLogger.record({ actorId: actor.sub, action: 'TOURNAMENT_CREATED', targetId: saved.id, clubId: dto.clubId });
+    return this.present(saved, actor, club);
   }
 
-  async update(id: string, dto: UpdateTournamentDto, organiserId: string) {
-    const t = await this.findOne(id);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  /** club.upserted from auth-service: keep our copy of the club current. */
+  async upsertClub(event: { id: string; name: string; slug: string; status: string }) {
+    if (!event?.id || !event.name) return;
+    await this.clubsRepo.save(this.clubsRepo.create({
+      id: event.id, name: event.name, slug: event.slug ?? event.id, status: event.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+    }));
+  }
+
+  async update(id: string, dto: UpdateTournamentDto, actor: Actor) {
+    const t = await this.load(id);
+    this.assertManage(actor, t);
     // Descriptive fields are editable in DRAFT and OPEN; anything that shapes
     // the draw only in DRAFT. Once play has started the tournament is frozen.
     if (t.status !== 'DRAFT' && t.status !== 'OPEN') {
@@ -128,7 +178,7 @@ export class TournamentsService {
     if (min != null && max != null && min > max) {
       throw new BadRequestException('minParticipants cannot be more than maxParticipants');
     }
-    // Copy only the validated DTO fields; status/organiserId/clubId can't
+    // Copy only the validated DTO fields; status/createdBy/clubId can't
     // arrive here (forbidNonWhitelisted rejects them with 400).
     for (const [k, v] of Object.entries(dto)) {
       if (v !== undefined) (t as any)[k] = v;
@@ -136,17 +186,17 @@ export class TournamentsService {
     return this.tournamentsRepo.save(t);
   }
 
-  async remove(id: string, organiserId: string) {
-    const t = await this.findOne(id);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async remove(id: string, actor: Actor) {
+    const t = await this.load(id);
+    this.assertManage(actor, t);
     if (t.status === 'IN_PROGRESS') throw new BadRequestException('Cannot delete a tournament that is in progress');
     await this.tournamentsRepo.remove(t);
-    this.auditLogger.record({ actorId: organiserId, action: 'TOURNAMENT_DELETED', targetId: id });
+    this.auditLogger.record({ actorId: actor.sub, action: 'TOURNAMENT_DELETED', targetId: id });
   }
 
-  async open(id: string, organiserId: string) {
-    const t = await this.findOne(id);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async open(id: string, actor: Actor) {
+    const t = await this.load(id);
+    this.assertManage(actor, t);
     if (t.status !== 'DRAFT') throw new BadRequestException('Tournament must be in DRAFT status to open registration');
     t.status = 'OPEN';
     return this.tournamentsRepo.save(t);
@@ -154,23 +204,24 @@ export class TournamentsService {
 
   // ── PARTICIPANTS ──────────────────────────
 
-  getParticipants(tournamentId: string) {
-    return this.participantsRepo.find({ where: { tournamentId } });
-  }
-
   async getMyParticipations(playerId: string) {
     const records = await this.participantsRepo.find({ where: { playerId } });
     return records.map((p: ParticipantEntity) => ({ tournamentId: p.tournamentId, participantId: p.id, status: p.status }));
   }
 
-  async enroll(tournamentId: string, dto: EnrollParticipantDto, requesterId: string) {
-    const t = await this.findOne(tournamentId);
-    if (dto.playerId !== requesterId && t.organiserId !== requesterId) {
+  async enroll(tournamentId: string, dto: EnrollParticipantDto, actor: Actor) {
+    const t = await this.load(tournamentId);
+    const requesterId = actor.sub;
+    const manager = canManage(actor, t);
+    if (dto.playerId !== requesterId && !manager) {
       throw new ForbiddenException('Cannot enroll another player');
+    }
+    if (!manager && !canEnter(actor, t, { clubActive: await this.clubActive(t.clubId) })) {
+      throw new ForbiddenException('This tournament is only open to members of its club');
     }
     if (t.status !== 'OPEN') throw new BadRequestException('Tournament is not open for registration');
     // The organiser can still add a late entry by hand.
-    if (t.registrationDeadline && t.organiserId !== requesterId && today() > String(t.registrationDeadline).slice(0, 10)) {
+    if (t.registrationDeadline && !manager && today() > String(t.registrationDeadline).slice(0, 10)) {
       throw new BadRequestException(`Registration closed on ${String(t.registrationDeadline).slice(0, 10)}`);
     }
     const approved = await this.participantsRepo.count({ where: { tournamentId, status: 'APPROVED' } });
@@ -186,9 +237,9 @@ export class TournamentsService {
     return this.participantsRepo.save(p);
   }
 
-  async approveParticipant(tournamentId: string, participantId: string, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async approveParticipant(tournamentId: string, participantId: string, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     this.assertEntriesEditable(t);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
@@ -198,40 +249,40 @@ export class TournamentsService {
       throw new BadRequestException(`The tournament is full (${approved}/${t.maxParticipants} approved)`);
     p.status = 'APPROVED';
     const saved = await this.participantsRepo.save(p);
-    this.auditLogger.record({ actorId: organiserId, action: 'PARTICIPANT_APPROVED', targetId: participantId, tournamentId });
+    this.auditLogger.record({ actorId: actor.sub, action: 'PARTICIPANT_APPROVED', targetId: participantId, tournamentId });
     return saved;
   }
 
-  async rejectParticipant(tournamentId: string, participantId: string, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async rejectParticipant(tournamentId: string, participantId: string, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     this.assertEntriesEditable(t);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
     if (p.status !== 'PENDING') throw new BadRequestException(`Only a pending entry can be rejected (this one is ${p.status})`);
     p.status = 'REJECTED';
     const saved = await this.participantsRepo.save(p);
-    this.auditLogger.record({ actorId: organiserId, action: 'PARTICIPANT_REJECTED', targetId: participantId, tournamentId });
+    this.auditLogger.record({ actorId: actor.sub, action: 'PARTICIPANT_REJECTED', targetId: participantId, tournamentId });
     return saved;
   }
 
-  async withdrawParticipant(tournamentId: string, participantId: string, requesterId: string) {
-    const t = await this.findOne(tournamentId);
+  async withdrawParticipant(tournamentId: string, participantId: string, actor: Actor) {
+    const requesterId = actor.sub;
+    const t = await this.load(tournamentId);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
-    // Only this tournament's owner may withdraw anyone; a player may withdraw
-    // themselves. Organising some OTHER tournament grants nothing here.
-    const isOwner = t.organiserId === requesterId;
-    if (!isOwner && p.playerId !== requesterId) throw new ForbiddenException('Not allowed');
+    // Only this tournament's managers may withdraw anyone; a player may
+    // withdraw themselves. Running some OTHER tournament grants nothing here.
+    if (!canManage(actor, t) && p.playerId !== requesterId) throw new ForbiddenException('Not allowed');
     p.status = 'WITHDRAWN';
     const saved = await this.participantsRepo.save(p);
     this.auditLogger.record({ actorId: requesterId, action: 'PARTICIPANT_WITHDRAWN', targetId: participantId, tournamentId });
     return saved;
   }
 
-  async assignSeed(tournamentId: string, participantId: string, seed: number | null, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async assignSeed(tournamentId: string, participantId: string, seed: number | null, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     this.assertEntriesEditable(t);
     const p = await this.participantsRepo.findOne({ where: { id: participantId, tournamentId } });
     if (!p) throw new NotFoundException('Participant not found');
@@ -245,6 +296,23 @@ export class TournamentsService {
     return this.participantsRepo.save(p);
   }
 
+  /** The tournament, unfiltered. Callers check access themselves. */
+  private async load(id: string) {
+    const t = await this.tournamentsRepo.findOne({ where: { id }, relations: ['participants', 'matches', 'groups'] });
+    if (!t) throw new NotFoundException('Tournament not found');
+    return t;
+  }
+
+  private assertManage(actor: Actor, t: TournamentEntity) {
+    if (!canManage(actor, t)) throw new ForbiddenException('Only an admin of this club can manage this tournament');
+  }
+
+  /** A tournament without a club, or whose club we haven't heard of, counts as active. */
+  private async clubActive(clubId: string | null) {
+    if (!clubId) return true;
+    return (await this.clubsRepo.findOne({ where: { id: clubId } }))?.status !== 'INACTIVE';
+  }
+
   /** Entries, approvals and seeds are fixed once the draw is made. */
   private assertEntriesEditable(t: TournamentEntity) {
     if (t.status !== 'DRAFT' && t.status !== 'OPEN')
@@ -253,9 +321,9 @@ export class TournamentsService {
 
   // ── DRAW GENERATION ───────────────────────
 
-  async generateDraw(tournamentId: string, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async generateDraw(tournamentId: string, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     if (t.status !== 'OPEN') throw new BadRequestException('Tournament must be OPEN to generate draw');
 
     const participants = await this.participantsRepo.find({ where: { tournamentId, status: 'APPROVED' } });
@@ -279,7 +347,7 @@ export class TournamentsService {
 
     await this.tournamentsRepo.update(tournamentId, { status: 'IN_PROGRESS' });
     t.status = 'IN_PROGRESS';
-    this.auditLogger.record({ actorId: organiserId, action: 'DRAW_GENERATED', targetId: tournamentId, drawFormat: t.drawFormat });
+    this.auditLogger.record({ actorId: actor.sub, action: 'DRAW_GENERATED', targetId: tournamentId, drawFormat: t.drawFormat });
     return { tournament: t, matches };
   }
 
@@ -461,13 +529,9 @@ export class TournamentsService {
 
   // ── DRAW MANAGEMENT ───────────────────────
 
-  getDraw(tournamentId: string) {
-    return this.matchesRepo.find({ where: { tournamentId }, order: { round: 'ASC', position: 'ASC' } });
-  }
-
-  async swapParticipants(tournamentId: string, dto: SwapDrawDto, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async swapParticipants(tournamentId: string, dto: SwapDrawDto, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     const matches = await this.matchesRepo.find({ where: { tournamentId } });
     this.assertDrawEditable(matches);
     const changed: TournamentMatchEntity[] = [];
@@ -480,12 +544,12 @@ export class TournamentsService {
       if (isChanged) changed.push(m);
     }
     if (changed.length > 0) await this.matchesRepo.save(changed);
-    return this.getDraw(tournamentId);
+    return this.matchesRepo.find({ where: { tournamentId }, order: { round: 'ASC', position: 'ASC' } });
   }
 
-  async updateDrawSlot(tournamentId: string, matchId: string, slot: string, participantId: string | null, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async updateDrawSlot(tournamentId: string, matchId: string, slot: string, participantId: string | null, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     const match = await this.matchesRepo.findOne({ where: { id: matchId, tournamentId } });
     if (!match) throw new NotFoundException('Match not found');
     this.assertDrawEditable(await this.matchesRepo.find({ where: { tournamentId } }));
@@ -504,9 +568,9 @@ export class TournamentsService {
       throw new BadRequestException('The draw is locked once a match has been played');
   }
 
-  async updateMatch(tournamentId: string, matchId: string, dto: UpdateMatchDto, organiserId: string) {
-    const t = await this.findOne(tournamentId);
-    if (t.organiserId !== organiserId) throw new ForbiddenException('Not your tournament');
+  async updateMatch(tournamentId: string, matchId: string, dto: UpdateMatchDto, actor: Actor) {
+    const t = await this.load(tournamentId);
+    this.assertManage(actor, t);
     const match = await this.matchesRepo.findOne({ where: { id: matchId, tournamentId } });
     if (!match) throw new NotFoundException('Match not found');
 
@@ -588,7 +652,7 @@ export class TournamentsService {
     }
 
     this.auditLogger.record({
-      actorId: organiserId,
+      actorId: actor.sub,
       action: previous ? 'MATCH_RESULT_CORRECTED' : 'MATCH_RESULT_RECORDED',
       targetId: matchId, tournamentId, winnerId: dto.winnerId,
     });

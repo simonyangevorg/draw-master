@@ -1,6 +1,5 @@
-import { ForbiddenException, UnauthorizedException, ValidationPipe, BadRequestException } from '@nestjs/common';
+import { UnauthorizedException, ValidationPipe, BadRequestException } from '@nestjs/common';
 import { JwtGuard } from './jwt.guard';
-import { OrganiserGuard } from './organiser.guard';
 import { UpdateTournamentDto } from '../tournaments/dto/update-tournament.dto';
 
 const ctxFor = (req: any) => ({ switchToHttp: () => ({ getRequest: () => req }) }) as any;
@@ -9,26 +8,17 @@ describe('JwtGuard (gateway headers)', () => {
   const guard = new JwtGuard();
 
   it('builds req.user from the X-User-* headers', () => {
-    const req: any = { headers: { 'x-user-sub': 'u1', 'x-user-role': 'ORGANISER', 'x-user-name': 'Hannah' } };
+    const req: any = { headers: { 'x-user-sub': 'u1', 'x-user-role': 'PLAYER', 'x-user-name': 'Hannah', 'x-user-clubs': 'c1:A,c2:M,bad,c3:Z' } };
     expect(guard.canActivate(ctxFor(req))).toBe(true);
-    expect(req.user).toEqual(expect.objectContaining({ sub: 'u1', role: 'ORGANISER', name: 'Hannah' }));
+    expect(req.user).toEqual(expect.objectContaining({
+      sub: 'u1', role: 'PLAYER', name: 'Hannah',
+      clubs: [{ id: 'c1', role: 'ADMIN' }, { id: 'c2', role: 'MEMBER' }],
+    }));
   });
 
   it('rejects a request without X-User-Sub, even with a bearer token', () => {
     const req: any = { headers: { authorization: 'Bearer anything' } };
     expect(() => guard.canActivate(ctxFor(req))).toThrow(UnauthorizedException);
-  });
-});
-
-describe('OrganiserGuard', () => {
-  const guard = new OrganiserGuard();
-
-  it('lets an ORGANISER through', () => {
-    expect(guard.canActivate(ctxFor({ user: { sub: 'u', role: 'ORGANISER' } }))).toBe(true);
-  });
-
-  it.each(['MEMBER', 'GUEST', undefined])('blocks role %s from creating tournaments', (role) => {
-    expect(() => guard.canActivate(ctxFor({ user: { sub: 'u', role } }))).toThrow(ForbiddenException);
   });
 });
 
@@ -40,7 +30,9 @@ describe('PATCH /tournaments/:id body validation', () => {
   it.each([
     [{ status: 'BANANA' }],
     [{ status: 'COMPLETED' }],
+    [{ createdBy: 'someone-else' }],
     [{ organiserId: 'someone-else' }],
+    [{ visibility: 'SECRET' }],
     [{ clubId: 'other-club' }],
     [{ id: 'x' }],
     [{ startDate: 'not-a-date' }],
