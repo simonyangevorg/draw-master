@@ -48,6 +48,13 @@ export class AuthController {
     return this.authService.refresh(dto);
   }
 
+  /** Sign out: revokes this session's refresh token. Always 204. */
+  @Post('logout')
+  @HttpCode(204)
+  async logout(@Body() dto: RefreshTokenDto) {
+    await this.authService.logout(dto.refreshToken);
+  }
+
   @Get('me')
   @UseGuards(JwtGuard)
   me(@Req() req: Request) {

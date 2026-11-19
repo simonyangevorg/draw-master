@@ -134,6 +134,19 @@ test.describe('logged-in callers stay inside their own data', () => {
     expect(parts.status()).toBe(401);
   });
 
+  // L-17: refresh tokens are single-use, and signing out ends the session.
+  test('a refresh token works once, and not at all after sign-out', async ({ request }) => {
+    const user = await signUp(request, 'Probe Session');
+    const first = await request.post('/api/auth/refresh', { data: { refreshToken: user.refreshToken } });
+    expect(first.status()).toBe(200);
+    const next = (await first.json()).refreshToken;
+    expect(next).not.toBe(user.refreshToken);
+    expect((await request.post('/api/auth/refresh', { data: { refreshToken: user.refreshToken } })).status()).toBe(401);
+
+    expect((await request.post('/api/auth/logout', { data: { refreshToken: next } })).status()).toBe(204);
+    expect((await request.post('/api/auth/refresh', { data: { refreshToken: next } })).status()).toBe(401);
+  });
+
   test('client-supplied identity headers are ignored', async ({ request }) => {
     const res = await request.get('/api/tournaments/me/participations', {
       headers: { 'X-User-Sub': FAKE_ID, 'X-User-Role': 'ORGANISER' },

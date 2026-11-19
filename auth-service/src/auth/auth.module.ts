@@ -11,12 +11,13 @@ import { JwtGuard } from './jwt.guard';
 import { UserEntity } from './entities/user.entity';
 import { ClubEntity } from './entities/club.entity';
 import { ClubMembershipEntity } from './entities/club-membership.entity';
+import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { AuditLogger } from './audit-logger.service';
 import { requireJwtSecret, requireEnv, LOGIN_THROTTLE_LIMIT, ACCESS_TOKEN_TTL } from '../env';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity, ClubEntity, ClubMembershipEntity]),
+    TypeOrmModule.forFeature([UserEntity, ClubEntity, ClubMembershipEntity, RefreshTokenEntity]),
     JwtModule.register({
       secret: requireJwtSecret(),
       signOptions: { expiresIn: ACCESS_TOKEN_TTL },

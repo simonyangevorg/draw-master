@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { UserEntity } from './entities/user.entity';
 import { ClubEntity } from './entities/club.entity';
 import { ClubMembershipEntity } from './entities/club-membership.entity';
+import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { AuditLogger } from './audit-logger.service';
 
 function makeUser(overrides: Partial<UserEntity> = {}): UserEntity {
@@ -33,6 +34,7 @@ describe('AuthService', () => {
   };
   const mockMembershipsRepo = { find: jest.fn() };
   const mockClubsRepo = { find: jest.fn() };
+  const mockRefreshRepo = { create: jest.fn((d) => ({ id: 'rt', ...d })), save: jest.fn(async (r) => r), findOne: jest.fn(), update: jest.fn() };
   const mockJwtService = {
     sign: jest.fn(),
     verify: jest.fn(),
@@ -50,6 +52,7 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(UserEntity), useValue: mockUsersRepo },
         { provide: getRepositoryToken(ClubMembershipEntity), useValue: mockMembershipsRepo },
         { provide: getRepositoryToken(ClubEntity), useValue: mockClubsRepo },
+        { provide: getRepositoryToken(RefreshTokenEntity), useValue: mockRefreshRepo },
         { provide: JwtService, useValue: mockJwtService },
         { provide: AuditLogger, useValue: mockAuditLogger },
       ],
@@ -160,27 +163,79 @@ describe('AuthService', () => {
     });
   });
 
-  describe('refresh', () => {
-    it('throws UnauthorizedException when the token is not a refresh token', async () => {
-      mockJwtService.verify.mockReturnValue({ sub: 'user-1', type: undefined });
-
-      await expect(service.refresh({ refreshToken: 'access-token' })).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('throws UnauthorizedException when verification fails', async () => {
-      mockJwtService.verify.mockImplementation(() => { throw new Error('expired'); });
-
-      await expect(service.refresh({ refreshToken: 'bad-token' })).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('issues a new token pair for a valid refresh token', async () => {
-      mockJwtService.verify.mockReturnValue({ sub: 'user-1', type: 'refresh' });
+  describe('refresh tokens (L-17)', () => {
+    // A tiny in-memory refresh_tokens table.
+    let rows: any[];
+    beforeEach(() => {
+      rows = [];
+      mockRefreshRepo.create.mockImplementation((d) => ({ id: `rt-${rows.length + 1}`, revokedAt: null, replacedBy: null, ...d }));
+      mockRefreshRepo.save.mockImplementation(async (r) => { rows = rows.filter((x) => x.id !== r.id).concat(r); return r; });
+      mockRefreshRepo.findOne.mockImplementation(async ({ where }) => rows.find((r) => r.tokenHash === where.tokenHash) ?? null);
+      mockRefreshRepo.update.mockImplementation(async (where, patch) => {
+        rows.filter((r) => r.userId === where.userId && !r.revokedAt).forEach((r) => Object.assign(r, patch));
+      });
       mockUsersRepo.findOne.mockResolvedValue(makeUser());
-      mockJwtService.sign.mockReturnValue('new-token');
+      mockJwtService.sign.mockReturnValue('access-token');
+    });
+    const signIn = async () => {
+      const hash = await bcrypt.hash('correct-password', 4);
+      mockUsersRepo.findOne.mockResolvedValue(makeUser({ passwordHash: hash }));
+      return service.login({ email: 'existing@example.com', password: 'correct-password' });
+    };
 
-      const result = await service.refresh({ refreshToken: 'valid-refresh-token' });
+    it('issues a random refresh token and stores only its hash', async () => {
+      const { refreshToken } = await signIn();
+      expect(refreshToken).toMatch(/^[\w-]{40,}$/);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].tokenHash).not.toContain(refreshToken);
+      expect(rows[0].tokenHash).toHaveLength(64);
+    });
 
-      expect(result.token).toBe('new-token');
+    it('rotates: a refresh returns a new pair and the old token stops working', async () => {
+      const first = await signIn();
+      const second = await service.refresh({ refreshToken: first.refreshToken });
+      expect(second.refreshToken).not.toBe(first.refreshToken);
+      expect(second).not.toHaveProperty('refreshTokenId');
+      expect(rows.find((r) => r.id === 'rt-1')).toMatchObject({ replacedBy: 'rt-2' });
+      expect(rows.find((r) => r.id === 'rt-1').revokedAt).toBeTruthy();
+    });
+
+    it('a rotated token used again revokes every session of that user', async () => {
+      const first = await signIn();
+      const second = await service.refresh({ refreshToken: first.refreshToken });
+      rows.find((r) => r.id === 'rt-1').revokedAt = new Date(Date.now() - 60_000); // a minute later
+      await expect(service.refresh({ refreshToken: first.refreshToken })).rejects.toThrow(UnauthorizedException);
+      // the thief's replay also killed the legitimate newer session
+      await expect(service.refresh({ refreshToken: second.refreshToken })).rejects.toThrow(UnauthorizedException);
+      expect(mockAuditLogger.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'REFRESH_TOKEN_REUSED' }));
+    });
+
+    it('two tabs refreshing at once: the loser gets 401 but nobody is signed out', async () => {
+      const first = await signIn();
+      const winner = await service.refresh({ refreshToken: first.refreshToken });
+      await expect(service.refresh({ refreshToken: first.refreshToken })).rejects.toThrow(UnauthorizedException);
+      await expect(service.refresh({ refreshToken: winner.refreshToken })).resolves.toHaveProperty('token');
+    });
+
+    it('a revoked (signed-out) token gets 401', async () => {
+      const { refreshToken } = await signIn();
+      await service.logout(refreshToken);
+      await expect(service.refresh({ refreshToken })).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('an expired or unknown token gets 401', async () => {
+      const { refreshToken } = await signIn();
+      rows[0].expiresAt = new Date(Date.now() - 1000);
+      await expect(service.refresh({ refreshToken })).rejects.toThrow(UnauthorizedException);
+      await expect(service.refresh({ refreshToken: 'made-up' })).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('an old-style JWT refresh token (from before L-17) is not accepted', async () => {
+      await expect(service.refresh({ refreshToken: 'eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoicmVmcmVzaCJ9.sig' })).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('logout of an unknown token is a quiet no-op', async () => {
+      await expect(service.logout('nothing')).resolves.toBeUndefined();
     });
   });
 
@@ -205,6 +260,7 @@ describe('AuthService: L-02 super-admin, club claims, password change', () => {
   };
   const membershipsRepo = { find: jest.fn() };
   const clubsRepo = { find: jest.fn() };
+  const refreshRepo = { create: jest.fn((d) => ({ id: 'rt', ...d })), save: jest.fn(async (r) => r), findOne: jest.fn(), update: jest.fn() };
   const jwt = { sign: jest.fn((p) => JSON.stringify(p)), verify: jest.fn() };
   const audit = { record: jest.fn() };
 
@@ -219,6 +275,7 @@ describe('AuthService: L-02 super-admin, club claims, password change', () => {
         { provide: getRepositoryToken(UserEntity), useValue: usersRepo },
         { provide: getRepositoryToken(ClubMembershipEntity), useValue: membershipsRepo },
         { provide: getRepositoryToken(ClubEntity), useValue: clubsRepo },
+        { provide: getRepositoryToken(RefreshTokenEntity), useValue: refreshRepo },
         { provide: JwtService, useValue: jwt },
         { provide: AuditLogger, useValue: audit },
       ],

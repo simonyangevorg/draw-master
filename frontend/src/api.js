@@ -65,7 +65,11 @@ export function refreshToken() {
       body: JSON.stringify({ refreshToken: user.refreshToken }),
     })
       .then(async (res) => {
-        if (!res.ok) return null;
+        if (!res.ok) {
+          // Lost a race with another tab, which stored a newer session: use that.
+          const latest = getUser();
+          return latest?.refreshToken && latest.refreshToken !== user.refreshToken ? latest : null;
+        }
         const data = await res.json();
         const updated = toSession(data);
         saveUser(updated);
@@ -92,6 +96,11 @@ export async function apiFetch(path, options = {}) {
 
   if (res.status === 401) {
     if (!options._retried) {
+      // Another tab may already have refreshed (refresh tokens are single-use,
+      // L-17): if the stored token changed meanwhile, just retry with it.
+      if (getToken() && getToken() !== token) {
+        return apiFetch(path, { ...options, _retried: true });
+      }
       const refreshed = await refreshToken();
       if (refreshed) {
         return apiFetch(path, { ...options, _retried: true });

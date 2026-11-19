@@ -50,3 +50,6 @@ export const REFRESH_THROTTLE_LIMIT = positiveInt(process.env.REFRESH_THROTTLE_L
 
 /** Access tokens are short-lived; the frontend refreshes them (L-17). */
 export const ACCESS_TOKEN_TTL = '15m';
+
+/** Refresh tokens last this many days, each refresh starting a new one (L-17). */
+export const REFRESH_TOKEN_DAYS = 30;

@@ -82,7 +82,16 @@ export function AuthProvider({ children }) {
     return next;
   }, []);
 
+  /** Sign out here, and end the session server-side too (L-17). */
   const logout = useCallback(() => {
+    const refresh = readSaved()?.refreshToken;
+    if (refresh) {
+      fetch(`${API_BASE_URL}/api/auth/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: refresh }),
+      }).catch(() => {});
+    }
     localStorage.removeItem("tennis_user");
     setUser(null);
   }, []);

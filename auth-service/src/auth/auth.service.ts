@@ -8,12 +8,14 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
+import { createHash, randomBytes } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UserEntity } from './entities/user.entity';
 import { ClubEntity } from './entities/club.entity';
 import { ClubMembershipEntity } from './entities/club-membership.entity';
+import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -22,7 +24,12 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { ClubClaim, JwtPayload, MAX_CLUB_CLAIMS } from './interfaces/user.interface';
 import { AuditLogger } from './audit-logger.service';
 import { normalizeEmail } from './dto/normalize';
-import { ACCESS_TOKEN_TTL } from '../env';
+import { ACCESS_TOKEN_TTL, REFRESH_TOKEN_DAYS } from '../env';
+
+/** A rotated token presented again this soon is a concurrent refresh, not a stolen copy. */
+const REUSE_GRACE_MS = 10_000;
+
+const hashToken = (token: string) => createHash('sha256').update(String(token)).digest('hex');
 
 @Injectable()
 export class AuthService implements OnApplicationBootstrap {
@@ -35,6 +42,8 @@ export class AuthService implements OnApplicationBootstrap {
     private readonly membershipsRepo: Repository<ClubMembershipEntity>,
     @InjectRepository(ClubEntity)
     private readonly clubsRepo: Repository<ClubEntity>,
+    @InjectRepository(RefreshTokenEntity)
+    private readonly refreshRepo: Repository<RefreshTokenEntity>,
     private readonly jwtService: JwtService,
     private readonly auditLogger: AuditLogger,
   ) {}
@@ -94,7 +103,7 @@ export class AuthService implements OnApplicationBootstrap {
     });
     await this.usersRepo.save(user);
 
-    return this.buildResponse(user);
+    return this.publicResponse(user);
   }
 
   async updateRole(userId: string, dto: UpdateRoleDto, actorId: string) {
@@ -127,7 +136,7 @@ export class AuthService implements OnApplicationBootstrap {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    return this.buildResponse(user);
+    return this.publicResponse(user);
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {
@@ -143,7 +152,7 @@ export class AuthService implements OnApplicationBootstrap {
     user.mustChangePassword = false;
     await this.usersRepo.save(user);
     this.auditLogger.record({ actorId: userId, action: 'PASSWORD_CHANGED', targetId: userId });
-    return this.buildResponse(user);
+    return this.publicResponse(user);
   }
 
   async getMe(userId: string) {
@@ -152,20 +161,50 @@ export class AuthService implements OnApplicationBootstrap {
     return { ...this.sanitize(user), clubs: await this.clubsOf(user.id) };
   }
 
+  /**
+   * Swap a refresh token for a new pair (L-17). The token is single-use:
+   * it's revoked and replaced. Presenting an already-used token means someone
+   * copied it, so every session of that user is revoked and they sign in again.
+   * Club memberships and role are re-read, so changes apply from here.
+   */
   async refresh(dto: RefreshTokenDto) {
-    let payload: { sub: string; type?: string };
-    try {
-      payload = this.jwtService.verify(dto.refreshToken, { algorithms: ['HS256'] });
-    } catch {
+    const row = await this.refreshRepo.findOne({ where: { tokenHash: hashToken(dto.refreshToken) } });
+    if (!row) throw new UnauthorizedException('Invalid or expired refresh token');
+    if (row.revokedAt) {
+      // Two tabs refreshing at once look like reuse; within a few seconds of
+      // the rotation it's that race, not theft: refuse this one quietly.
+      const raced = Date.now() - row.revokedAt.getTime() < REUSE_GRACE_MS;
+      if (row.replacedBy && !raced) {
+        await this.revokeAllFor(row.userId);
+        this.auditLogger.record({ actorId: row.userId, action: 'REFRESH_TOKEN_REUSED', targetId: row.id });
+      }
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
-    if (payload.type !== 'refresh') throw new UnauthorizedException('Invalid refresh token');
+    if (row.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('Invalid or expired refresh token');
 
-    const user = await this.usersRepo.findOne({ where: { id: payload.sub } });
+    const user = await this.usersRepo.findOne({ where: { id: row.userId } });
     if (!user) throw new UnauthorizedException('Invalid refresh token');
 
-    // Re-reads club memberships, so role changes apply from the next refresh.
-    return this.buildResponse(user);
+    const response = await this.buildResponse(user);
+    row.revokedAt = new Date();
+    row.replacedBy = response.refreshTokenId;
+    await this.refreshRepo.save(row);
+    const { refreshTokenId, ...out } = response;
+    return out;
+  }
+
+  /** Sign-out: this session's refresh token stops working (L-17). Unknown tokens are ignored. */
+  async logout(refreshToken: string) {
+    const row = await this.refreshRepo.findOne({ where: { tokenHash: hashToken(refreshToken) } });
+    if (row && !row.revokedAt) {
+      row.revokedAt = new Date();
+      await this.refreshRepo.save(row);
+    }
+  }
+
+  /** Ends every session of a user (token reuse now; disabling an account in L-04). */
+  async revokeAllFor(userId: string) {
+    await this.refreshRepo.update({ userId, revokedAt: IsNull() }, { revokedAt: new Date() });
   }
 
   /** ACTIVE memberships in ACTIVE clubs, with club names for the UI. */
@@ -182,6 +221,12 @@ export class AuthService implements OnApplicationBootstrap {
       .map((m) => ({ id: m.clubId, role: m.role, name: byId.get(m.clubId).name, slug: byId.get(m.clubId).slug }));
   }
 
+  /** A token pair for the client (without the internal refresh-token id). */
+  private async publicResponse(user: UserEntity) {
+    const { refreshTokenId, ...out } = await this.buildResponse(user);
+    return out;
+  }
+
   private async buildResponse(user: UserEntity) {
     const clubs = await this.clubsOf(user.id);
     const payload: JwtPayload = {
@@ -192,8 +237,14 @@ export class AuthService implements OnApplicationBootstrap {
       clubs: clubs.map(({ id, role }) => ({ id, role })),
     };
     const token = this.jwtService.sign(payload, { expiresIn: ACCESS_TOKEN_TTL });
-    const refreshToken = this.jwtService.sign({ sub: user.id, type: 'refresh' }, { expiresIn: '30d' });
-    return { token, refreshToken, user: { ...this.sanitize(user), clubs } };
+    // Refresh tokens are random, not JWTs: only their hash is kept (L-17).
+    const refreshToken = randomBytes(32).toString('base64url');
+    const row = await this.refreshRepo.save(this.refreshRepo.create({
+      userId: user.id,
+      tokenHash: hashToken(refreshToken),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_DAYS * 86400000),
+    }));
+    return { token, refreshToken, refreshTokenId: row.id, user: { ...this.sanitize(user), clubs } };
   }
 
   private sanitize(user: UserEntity) {
