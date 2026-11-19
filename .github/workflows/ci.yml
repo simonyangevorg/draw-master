@@ -131,6 +131,8 @@ jobs:
           LOGIN_THROTTLE_LIMIT=1000
           REGISTER_THROTTLE_LIMIT=1000
           REFRESH_THROTTLE_LIMIT=1000
+          SUPERADMIN_EMAIL=e2e-superadmin@example.com
+          SUPERADMIN_INITIAL_PASSWORD=E2E-initial-password-1
           EOF
       - name: Start the full stack
         run: docker compose up -d --build

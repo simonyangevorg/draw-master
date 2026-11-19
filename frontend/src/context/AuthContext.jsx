@@ -1,81 +1,85 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE_URL } from "../config";
-import { errorMessage } from "../api";
+import { apiPost, errorMessage, refreshToken, toSession } from "../api";
 
 const AuthContext = createContext(null);
 
+function readSaved() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("tennis_user") || "null");
+    return saved ? { clubs: [], ...saved } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
   const navigate = useNavigate();
-  const [user, setUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem("tennis_user");
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState(readSaved);
 
-  // api.js dispatches this when a request 401s and the token refresh also
-  // fails — react by dropping the session and navigating, instead of api.js
-  // doing a hard window.location redirect (which only makes sense in a browser tab).
+  const store = useCallback((session) => {
+    localStorage.setItem("tennis_user", JSON.stringify(session));
+    setUser(session);
+    return session;
+  }, []);
+
+  // api.js dispatches these: a refresh that failed (drop the session and go
+  // to login, instead of a hard window.location redirect), or one that
+  // succeeded somewhere in the app (pick up the new clubs/role).
   useEffect(() => {
-    function handleSessionExpired() {
+    function onExpired() {
       setUser(null);
       navigate("/login");
     }
-    window.addEventListener("tennis:session-expired", handleSessionExpired);
-    return () => window.removeEventListener("tennis:session-expired", handleSessionExpired);
+    function onRefreshed(e) {
+      setUser(e.detail);
+    }
+    window.addEventListener("tennis:session-expired", onExpired);
+    window.addEventListener("tennis:session-refreshed", onRefreshed);
+    return () => {
+      window.removeEventListener("tennis:session-expired", onExpired);
+      window.removeEventListener("tennis:session-refreshed", onRefreshed);
+    };
   }, [navigate]);
 
-  const login = useCallback(async (email, password) => {
-    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-      throw new Error(await errorMessage(res, "Invalid credentials"));
-    }
-
-    const data = await res.json();
-    const userData = {
-      id: data.user.id,
-      email: data.user.email,
-      name: data.user.name,
-      role: data.user.role,
-      token: data.token,
-      refreshToken: data.refreshToken,
-    };
-    localStorage.setItem("tennis_user", JSON.stringify(userData));
-    setUser(userData);
-    return userData;
+  // Refresh once when the app loads, so club seats granted since the last
+  // visit (or a sign-out elsewhere) take effect straight away (dev plan §1.2).
+  useEffect(() => {
+    if (readSaved()?.refreshToken) refreshToken();
   }, []);
 
-  const register = useCallback(async ({ name, email, password, role, clubId }) => {
-    const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+  const signIn = useCallback(async (path, body, fallback) => {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, email, password, role, clubId: clubId || undefined }),
+      body: JSON.stringify(body),
     });
+    if (!res.ok) throw new Error(await errorMessage(res, fallback));
+    return store(toSession(await res.json()));
+  }, [store]);
 
-    if (!res.ok) {
-      throw new Error(await errorMessage(res, "Registration failed"));
-    }
+  const login = useCallback(
+    (email, password) => signIn("/api/auth/login", { email, password }, "Invalid credentials"),
+    [signIn],
+  );
 
-    const data = await res.json();
-    const userData = {
-      id: data.user.id,
-      email: data.user.email,
-      name: data.user.name,
-      role: data.user.role,
-      token: data.token,
-      refreshToken: data.refreshToken,
-    };
-    localStorage.setItem("tennis_user", JSON.stringify(userData));
-    setUser(userData);
-    return userData;
+  const register = useCallback(
+    ({ name, email, password }) => signIn("/api/auth/register", { name, email, password }, "Registration failed"),
+    [signIn],
+  );
+
+  const changePassword = useCallback(async (currentPassword, newPassword) => {
+    const res = await apiPost("/api/auth/password", { currentPassword, newPassword });
+    if (!res.ok) throw new Error(await errorMessage(res, "Could not change the password"));
+    return store(toSession(await res.json()));
+  }, [store]);
+
+  /** Re-read clubs and role now (after a change the user should see at once). */
+  const refreshSession = useCallback(async () => {
+    const next = await refreshToken();
+    if (next) setUser(next);
+    return next;
   }, []);
 
   const logout = useCallback(() => {
@@ -83,8 +87,20 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const adminClubs = (user?.clubs ?? []).filter(c => c.role === "ADMIN");
+  const isClubAdmin = useCallback(
+    (clubId) => !!clubId && (user?.clubs ?? []).some(c => c.id === clubId && c.role === "ADMIN"),
+    [user],
+  );
+  /** Can open a tournament somewhere: super-admin, or admin of at least one club. */
+  const canCreateTournaments = isSuperAdmin || adminClubs.length > 0;
+
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{
+      user, login, register, logout, changePassword, refreshSession,
+      isAuthenticated: !!user, isSuperAdmin, isClubAdmin, adminClubs, canCreateTournaments,
+    }}>
       {children}
     </AuthContext.Provider>
   );

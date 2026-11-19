@@ -29,10 +29,32 @@ function notifySessionExpired() {
   window.dispatchEvent(new Event("tennis:session-expired"));
 }
 
+/**
+ * What we keep of a login/refresh response. `clubs` lists the club seats
+ * ({id, name, slug, role: ADMIN|MEMBER}) that decide what the UI offers;
+ * the server enforces the same rules from the token (L-02/L-06).
+ */
+export function toSession(data) {
+  return {
+    id: data.user.id,
+    email: data.user.email,
+    name: data.user.name,
+    role: data.user.role,
+    clubs: Array.isArray(data.user.clubs) ? data.user.clubs : [],
+    mustChangePassword: !!data.user.mustChangePassword,
+    token: data.token,
+    refreshToken: data.refreshToken,
+  };
+}
+
 // Dedupe concurrent refresh attempts — several requests can 401 at once.
 let refreshPromise = null;
 
-function refreshToken() {
+/**
+ * Swap the refresh token for a fresh session. Also how club and role
+ * changes reach this browser: they ride in the next token.
+ */
+export function refreshToken() {
   const user = getUser();
   if (!user?.refreshToken) return Promise.resolve(null);
 
@@ -45,15 +67,9 @@ function refreshToken() {
       .then(async (res) => {
         if (!res.ok) return null;
         const data = await res.json();
-        const updated = {
-          id: data.user.id,
-          email: data.user.email,
-          name: data.user.name,
-          role: data.user.role,
-          token: data.token,
-          refreshToken: data.refreshToken,
-        };
+        const updated = toSession(data);
         saveUser(updated);
+        window.dispatchEvent(new CustomEvent("tennis:session-refreshed", { detail: updated }));
         return updated;
       })
       .catch(() => null)

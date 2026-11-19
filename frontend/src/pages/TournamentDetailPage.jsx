@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, errorMessage } from "../api";
 import BracketView from "../components/BracketView";
 import GroupStageView from "../components/GroupStageView";
 import Sidebar from "../components/Sidebar";
-import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, label } from "../constants";
+import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL, FORMAT_LABEL, AGE_GROUP_LABEL, ENTRY_STATUS_LABEL, VISIBILITY_LABEL, label } from "../constants";
 
 export default function TournamentDetailPage() {
   const { id } = useParams();
@@ -21,7 +21,9 @@ export default function TournamentDetailPage() {
   const [confirmWithdrawId, setConfirmWithdrawId] = useState(null);
   const [confirmDraw, setConfirmDraw] = useState(false);
 
-  const isOrganiser = tournament?.organiserId === user?.id;
+  // What this user may do comes from the server (L-06): club admins and the
+  // super-admin manage; club members (and, for now, anyone on a PUBLIC one) enter.
+  const isOrganiser = !!tournament?.access?.canManage;
 
   useEffect(() => { loadTournament(); }, [id]);
 
@@ -118,7 +120,7 @@ export default function TournamentDetailPage() {
 
   // Current user's participation record (if any)
   const myParticipant = participants.find(p => p.playerId === user?.id);
-  const canApply = !isOrganiser && tournament.status === "OPEN" && !myParticipant;
+  const canApply = !isOrganiser && tournament.status === "OPEN" && !myParticipant && !!tournament.access?.canEnter;
 
   // Players not yet in the draw (APPROVED but no slot in any match)
   const inDrawIds = new Set(draw.flatMap(m => [m.participant1Id, m.participant2Id]).filter(Boolean));
@@ -242,6 +244,7 @@ export default function TournamentDetailPage() {
             <div className="detail-card">
               <h3>Tournament Details</h3>
               <dl className="detail-list">
+                {tournament.club && <><dt>Club</dt><dd>{tournament.club.name}</dd></>}
                 <dt>Type</dt><dd>{label(TYPE_LABEL, tournament.tournamentType)}</dd>
                 <dt>Format</dt><dd>{label(FORMAT_LABEL, tournament.drawFormat)}</dd>
                 <dt>Surface</dt><dd>{label(SURFACE_LABEL, tournament.surface)}</dd>
@@ -269,7 +272,7 @@ export default function TournamentDetailPage() {
                 <dt>Entry Fee</dt><dd>{tournament.entryFee ? `$${tournament.entryFee}` : "Free"}</dd>
                 <dt>Prize Pool</dt><dd>{tournament.prizePool ? `$${tournament.prizePool}` : "—"}</dd>
                 <dt>Ranking Points</dt><dd>{tournament.rankingPoints ?? "—"}</dd>
-                <dt>Public</dt><dd>{tournament.isPublic ? "Yes" : "No"}</dd>
+                <dt>Visible to</dt><dd>{label(VISIBILITY_LABEL, tournament.visibility)}</dd>
                 <dt>Requires Approval</dt><dd>{tournament.requiresApproval ? "Yes" : "No"}</dd>
               </dl>
             </div>

@@ -6,7 +6,7 @@ import { STATUS_BADGE, SURFACE_LABEL, TYPE_LABEL } from "../constants";
 import Sidebar from "../components/Sidebar";
 
 export default function TournamentsPage() {
-  const { user } = useAuth();
+  const { user, canCreateTournaments } = useAuth();
   const [tournaments, setTournaments] = useState([]);
   const [participations, setParticipations] = useState({});
   const [loading, setLoading] = useState(true);
@@ -61,7 +61,7 @@ export default function TournamentsPage() {
             <h1 className="dash-title">Tournaments</h1>
             <p className="dash-sub">Browse and apply to open tournaments.</p>
           </div>
-          {user?.role === "ORGANISER" && (
+          {canCreateTournaments && (
             <Link to="/tournaments/new" className="btn btn-primary btn-lg">
               + New Tournament
             </Link>
@@ -84,7 +84,7 @@ export default function TournamentsPage() {
                 <TournamentCard
                   key={t.id}
                   t={t}
-                  isOwn={t.organiserId === user?.id}
+                  isOwn={!!t.access?.canManage}
                   participation={participations[t.id]}
                   onApply={handleApply}
                   onWithdraw={handleWithdraw}
@@ -111,13 +111,14 @@ function TournamentCard({ t, isOwn, participation, onApply, onWithdraw }) {
       <h3 className="t-card-name">{t.name}</h3>
       <div className="t-card-meta">
         <span>{TYPE_LABEL[t.tournamentType] ?? t.tournamentType}</span>
+        {t.club && <span>🏟️ {t.club.name}</span>}
         {t.city && <span>📍 {t.city}</span>}
       </div>
       <div className="t-card-dates">{t.startDate} → {t.endDate}</div>
 
       {!isOwn && (
         <div className="t-card-action" onClick={e => e.stopPropagation()}>
-          {t.status === "OPEN" && !status && (
+          {t.status === "OPEN" && !status && t.access?.canEnter && (
             <button className="btn btn-primary btn-sm" onClick={e => onApply(t.id, e)}>Apply</button>
           )}
           {status === "PENDING" && (
@@ -136,7 +137,7 @@ function TournamentCard({ t, isOwn, participation, onApply, onWithdraw }) {
       )}
       {isOwn && (
         <div className="t-card-action">
-          <span className="t-card-status-pill" style={{ background: "var(--green-light)", color: "var(--green-dark)" }}>Your tournament</span>
+          <span className="t-card-status-pill" style={{ background: "var(--green-light)", color: "var(--green-dark)" }}>You run this</span>
         </div>
       )}
     </Link>

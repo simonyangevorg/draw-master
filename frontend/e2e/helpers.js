@@ -1,6 +1,5 @@
 export async function registerMember(page, { name, email, password }) {
   await page.goto('/register');
-  await page.getByText('Club Member', { exact: true }).click();
   await page.getByLabel('Full name').fill(name);
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);

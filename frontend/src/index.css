@@ -1234,3 +1234,7 @@ button.form-link { background: none; border: 0; padding: 0; cursor: pointer; fon
 @media (max-width: 480px) {
   .navbar-links a:not(.btn) { display: none; }
 }
+
+/* ── Club admin lists (L-03) ── */
+.admin-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .5rem; }
+.admin-list li { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .5rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

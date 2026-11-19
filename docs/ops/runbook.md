@@ -165,6 +165,21 @@ Sprint 0 closes holes that were open on the live site, so after deploying it:
 4. **player-service is gone** (L-18). `--remove-orphans` stops its container. The `players` database stays on the volume, unused; once you're sure nothing needs it, drop it: `docker compose exec -T postgres psql -U $U -d postgres -c 'DROP DATABASE players;'` (and `matches` the same way, if it exists).
 5. **Login throttling now keys on the real client IP** (B-15), which the gateway reads from the host proxy's `X-Forwarded-For`. After deploying, sign in once from a phone on mobile data and once from Wi-Fi, then check the gateway saw two different public IPs: `docker compose logs api-gateway --since 10m | grep 'POST /api/auth/login'`. If every line starts with the same private 172.x/10.x address, the host proxy isn't sending `X-Forwarded-For`; add `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` to its site config and reload it.
 
+## 3b. Sprint 2 rollout: roles and clubs (one-off)
+
+From Sprint 2 nobody "is an organiser" any more: the super-admin opens clubs and appoints club admins, and club admins run the tournaments. The deploy turns every existing account into a plain player.
+
+1. **Before deploying, add the super-admin to the server `.env`** (never commit these):
+   ```bash
+   SUPERADMIN_EMAIL=<your email>
+   SUPERADMIN_INITIAL_PASSWORD=<12+ characters, used once>
+   ```
+   On boot, auth-service makes that account the super-admin: it promotes it if it already exists, or creates it with the initial password. Once a super-admin exists, this does nothing, so the lines can stay.
+2. **Deploy** (section 2).
+3. **Sign in** as the super-admin. If the account was just created, the site asks you to choose a new password first.
+4. **Open the clubs.** Go to *Manage clubs* → *Open a club* (FPTC first), then on the club's page search for each admin by name or email and choose *Make admin*. An admin sees *New Tournament* the next time their session refreshes (at most 15 minutes, or straight away when they reload the page).
+5. Tournaments that existed before clubs have no club yet. Whoever created them still manages them; L-07 (Sprint 5) moves them into FPTC.
+
 ---
 
 ## 4. Restoring from a backup (disaster recovery)

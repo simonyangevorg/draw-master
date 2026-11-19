@@ -37,7 +37,7 @@ Only `api-gateway` is exposed to the host, on `127.0.0.1:8080` (production puts 
 | Service | Internal Port | DB | Notes |
 |---|---|---|---|
 | api-gateway (Nginx) | 80 (host: 127.0.0.1:8080) | — | JWT gate, real client IP, routes all `/api/*` |
-| auth-service | 8000 | auth | Register/login/refresh (throttled per client IP), `/auth/validate` for Nginx |
+| auth-service | 8000 | auth | Register/login/refresh (throttled per client IP), `/auth/validate` for Nginx, clubs + memberships, super-admin bootstrap |
 | tournament-service | 8000 | tournaments | Full tournament lifecycle (see below), owns match entities directly |
 | stats-service | 8000 | stats | Consumes `match.completed` and `match.corrected` from RabbitMQ |
 | notification-service | 8000 | notifications | Consumes RabbitMQ events |
@@ -67,11 +67,14 @@ All requests go through `127.0.0.1:8080`. Nginx swaps the `/api/<service>/` pref
 
 Gateway-raised errors (401, 429, 404) are JSON. `/api/<service>` without a trailing slash works too.
 
+**Roles (L-02):** platform role is `SUPER_ADMIN | PLAYER`. Running a club is a club-membership seat (`ADMIN | MEMBER`), carried in the token as `clubs`. Tournament rights come from `tournament-service/src/tournaments/access.ts` (manage = super-admin or admin of the tournament's club). The frontend never compares ids: API rows carry `access: {canManage, canEnter}`.
+
 JWT user claims are injected as headers by Nginx after validation (a missing token means no headers, i.e. an anonymous caller; a bad token is a 401):
 - `X-User-Sub` — user UUID
 - `X-User-Email`
 - `X-User-Name`
 - `X-User-Role`
+- `X-User-Clubs` — club seats, `clubId:A,clubId:M` (tournament-service only)
 
 Services read identity from these headers — never from the raw Authorization header.
 

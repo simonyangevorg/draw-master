@@ -20,7 +20,7 @@ export default function DashboardPage() {
         setTournaments(Array.isArray(ts) ? ts : []);
         if (Array.isArray(ps)) {
           const map = {};
-          ps.forEach(p => { map[p.tournamentId] = { participantId: p.id, status: p.status }; });
+          ps.forEach(p => { map[p.tournamentId] = { participantId: p.participantId, status: p.status }; });
           setParticipations(map);
         }
       })
@@ -28,10 +28,11 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const myTournaments = tournaments.filter(t => t.organiserId === user?.id);
+  // Tournaments this user runs: the server says so per row (L-06).
+  const myTournaments = tournaments.filter(t => t.access?.canManage);
   const participatedTournaments = tournaments.filter(t => participations[t.id]);
 
-  const isOrganiser = user?.role === "ORGANISER";
+  const { canCreateTournaments: isOrganiser } = useAuth();
 
   return (
     <div className="dash-layout">

@@ -24,14 +24,13 @@ export default function ProfilePage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const myTournaments = tournaments.filter(t => t.organiserId === user?.id);
+  const myTournaments = tournaments.filter(t => t.access?.canManage);
   const approved = participations.filter(p => p.status === "APPROVED");
   const pending = participations.filter(p => p.status === "PENDING");
 
   const roleColor = {
-    ORGANISER: { bg: "#e8f5ee", color: "#1f5c3a" },
-    MEMBER:    { bg: "#eff6ff", color: "#1d4ed8" },
-    GUEST:     { bg: "#f3f4f6", color: "#374151" },
+    SUPER_ADMIN: { bg: "#e8f5ee", color: "#1f5c3a" },
+    PLAYER:      { bg: "#eff6ff", color: "#1d4ed8" },
   }[user?.role] ?? { bg: "#f3f4f6", color: "#374151" };
 
   return (
@@ -86,7 +85,7 @@ export default function ProfilePage() {
         <section className="dash-section">
           <div className="dash-section-header"><h2>Activity</h2></div>
           <div className="stats-row">
-            {user?.role === "ORGANISER" && (
+            {myTournaments.length > 0 && (
               <div className="stat-card">
                 <div className="stat-value">{myTournaments.length}</div>
                 <div className="stat-label">Tournaments Organised</div>

@@ -48,9 +48,18 @@ export const ENTRY_STATUS_LABEL = {
 };
 
 export const ROLE_LABEL = {
-  ORGANISER: "Organiser",
-  MEMBER:    "Member",
-  GUEST:     "Guest",
+  SUPER_ADMIN: "Super-admin",
+  PLAYER:      "Player",
+};
+
+export const CLUB_ROLE_LABEL = {
+  ADMIN:  "Club admin",
+  MEMBER: "Member",
+};
+
+export const VISIBILITY_LABEL = {
+  CLUB:   "Club members",
+  PUBLIC: "Everyone",
 };
 
 /**

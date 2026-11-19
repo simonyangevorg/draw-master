@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { apiPost, errorMessage } from "../api";
+import { apiGet, apiPost, errorMessage } from "../api";
 import Sidebar from "../components/Sidebar";
 import { TYPE_LABEL, FORMAT_LABEL, SURFACE_LABEL, UNAVAILABLE_TYPES, UNAVAILABLE_FORMATS, label } from "../constants";
 
@@ -17,7 +17,7 @@ const suggestedGroups = (max) => (Number(max) <= 8 ? 2 : Number(max) <= 16 ? 4 :
 
 const INITIAL = {
   // Step 1
-  name: "", description: "", venue: "", city: "", country: "",
+  clubId: "", name: "", description: "", venue: "", city: "", country: "",
   startDate: "", endDate: "", registrationDeadline: "",
   // Step 2
   tournamentType: "SINGLES_MEN", drawFormat: "SINGLE_ELIMINATION",
@@ -28,15 +28,32 @@ const INITIAL = {
   setsToWin: 2, gamesPerSet: 6, tiebreakAt: 6,
   finalSetTiebreak: false, noAd: false, seeded: true,
   // Step 4
-  isPublic: true, requiresApproval: false,
+  // PUBLIC for now: until players can join clubs (L-05) a CLUB tournament
+  // would have nobody able to enter it. The organiser can still pick CLUB.
+  visibility: "PUBLIC", requiresApproval: false,
   entryFee: "", prizePool: "", rankingPoints: "",
 };
 
 export default function CreateTournamentPage() {
-  const { user } = useAuth();
+  const { isSuperAdmin, adminClubs } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState(INITIAL);
+  // Clubs this user can create for: their admin seats, or every active club for the super-admin.
+  const [clubs, setClubs] = useState(adminClubs);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    apiGet("/api/auth/admin/clubs")
+      .then(r => (r.ok ? r.json() : []))
+      .then(all => setClubs((Array.isArray(all) ? all : []).filter(c => c.status === "ACTIVE")))
+      .catch(() => {});
+  }, [isSuperAdmin]);
+
+  // One club: just use it.
+  useEffect(() => {
+    if (clubs.length === 1 && !form.clubId) setForm(p => ({ ...p, clubId: clubs[0].id }));
+  }, [clubs]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -58,6 +75,7 @@ export default function CreateTournamentPage() {
 
   function validateStep() {
     if (step === 0) {
+      if (!form.clubId) { setError("Choose the club this tournament belongs to."); return false; }
       if (!form.name.trim()) { setError("Tournament name is required."); return false; }
       if (form.name.trim().length > 100) { setError("Keep the name under 100 characters."); return false; }
       if (!form.startDate || !form.endDate) { setError("Start and end dates are required."); return false; }
@@ -152,6 +170,17 @@ export default function CreateTournamentPage() {
             {step === 0 && (
               <div className="form-section">
                 <h2 className="form-section-title">Basic Information</h2>
+                <div className="form-group">
+                  <label htmlFor="clubId">Club *</label>
+                  {clubs.length === 0 ? (
+                    <p className="form-hint">You aren't an admin of any club yet, so you can't create tournaments.</p>
+                  ) : (
+                    <select id="clubId" name="clubId" value={form.clubId} onChange={handleChange}>
+                      <option value="">Choose a club…</option>
+                      {clubs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  )}
+                </div>
                 <div className="form-group">
                   <label>Tournament Name *</label>
                   <input name="name" maxLength={100} value={form.name} onChange={handleChange} placeholder="e.g. Summer Club Open 2026" />
@@ -337,8 +366,12 @@ export default function CreateTournamentPage() {
                   <label>Visibility & Registration</label>
                   <div className="toggle-group">
                     <label className="toggle-label">
-                      <input type="checkbox" name="isPublic" checked={form.isPublic} onChange={handleChange} />
-                      <span>Public tournament (visible to players outside your club)</span>
+                      <input type="radio" name="visibility" value="PUBLIC" checked={form.visibility === "PUBLIC"} onChange={handleChange} />
+                      <span>Everyone can see it and sign up</span>
+                    </label>
+                    <label className="toggle-label">
+                      <input type="radio" name="visibility" value="CLUB" checked={form.visibility === "CLUB"} onChange={handleChange} />
+                      <span>Only members of the club</span>
                     </label>
                     <label className="toggle-label">
                       <input type="checkbox" name="requiresApproval" checked={form.requiresApproval} onChange={handleChange} />

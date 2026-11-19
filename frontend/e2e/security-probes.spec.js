@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { uniqueEmail } from './helpers.js';
+import { E2E_CLUB_NAME, ORGANISER_EMAIL, ORGANISER_PASSWORD } from './global-setup.js';
 
 // API-level probes for the holes found in the 2026-11 QA pass (QA-33, QA-20).
 // Every request here goes through the real gateway, exactly as an attacker's
@@ -19,6 +20,16 @@ async function signUp(request, name) {
 }
 
 const bearer = (token) => ({ Authorization: `Bearer ${token}` });
+
+async function e2eClubId(request) {
+  const clubs = await (await request.get('/api/auth/clubs')).json();
+  return clubs.find((c) => c.name === E2E_CLUB_NAME).id;
+}
+
+const TOURNAMENT = {
+  startDate: '2027-05-01', endDate: '2027-05-02',
+  tournamentType: 'SINGLES_MEN', drawFormat: 'SINGLE_ELIMINATION', surface: 'CLAY',
+};
 
 test.describe('anonymous callers cannot write', () => {
   // player-service is retired (L-18): its routes are gone from the gateway.
@@ -76,12 +87,43 @@ test.describe('logged-in callers stay inside their own data', () => {
     const player = await signUp(request, 'Probe Player');
     const res = await request.post('/api/tournaments/', {
       headers: bearer(player.token),
-      data: {
-        name: 'Player-made', startDate: '2027-05-01', endDate: '2027-05-02',
-        tournamentType: 'SINGLES_MEN', drawFormat: 'SINGLE_ELIMINATION', surface: 'CLAY',
-      },
+      data: { ...TOURNAMENT, name: 'Player-made', clubId: await e2eClubId(request) },
     });
     expect(res.status()).toBe(403);
+  });
+
+  // L-06: club seats come only from the signed token, never from the client.
+  test('a forged X-User-Clubs header does not make a player a club admin', async ({ request }) => {
+    const player = await signUp(request, 'Probe Forger');
+    const clubId = await e2eClubId(request);
+    const res = await request.post('/api/tournaments/', {
+      headers: { ...bearer(player.token), 'X-User-Clubs': `${clubId}:A`, 'X-User-Role': 'SUPER_ADMIN' },
+      data: { ...TOURNAMENT, name: 'Forged admin', clubId },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("a non-member can't see a club-only tournament, or manage it", async ({ request }) => {
+    const org = await (await request.post('/api/auth/login', { data: { email: ORGANISER_EMAIL, password: ORGANISER_PASSWORD } })).json();
+    const created = await request.post('/api/tournaments/', {
+      headers: bearer(org.token),
+      data: { ...TOURNAMENT, name: `Members only ${Date.now()}`, clubId: await e2eClubId(request), visibility: 'CLUB' },
+    });
+    expect(created.status()).toBe(201);
+    const t = await created.json();
+    await request.post(`/api/tournaments/${t.id}/open`, { headers: bearer(org.token) });
+
+    const outsider = await signUp(request, 'Probe Outsider');
+    expect((await request.get(`/api/tournaments/${t.id}`, { headers: bearer(outsider.token) })).status()).toBe(404);
+    expect((await request.get(`/api/tournaments/${t.id}`)).status()).toBe(404);
+    const list = await (await request.get('/api/tournaments/', { headers: bearer(outsider.token) })).json();
+    expect(list.some((x) => x.id === t.id)).toBe(false);
+    const entry = await request.post(`/api/tournaments/${t.id}/participants`, {
+      headers: bearer(outsider.token), data: { playerId: outsider.id },
+    });
+    expect(entry.status()).toBe(403);
+    const draw = await request.post(`/api/tournaments/${t.id}/draw`, { headers: bearer(outsider.token) });
+    expect(draw.status()).toBe(403);
   });
 
   test('a refresh token is not accepted as an access token', async ({ request }) => {

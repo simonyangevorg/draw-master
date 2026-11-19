@@ -5,7 +5,7 @@ import Logo from "./Logo";
 import { ROLE_LABEL, label } from "../constants";
 
 export default function Sidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, isSuperAdmin, canCreateTournaments } = useAuth();
   const navigate = useNavigate();
 
   const linkClass = ({ isActive }) =>
@@ -23,9 +23,17 @@ export default function Sidebar() {
         <NavLink to="/tournaments" end className={linkClass}>
           <span>🏆</span> Tournaments
         </NavLink>
-        {user?.role === "ORGANISER" && (
+        {canCreateTournaments && (
           <NavLink to="/tournaments/new" className={linkClass}>
             <span>➕</span> New Tournament
+          </NavLink>
+        )}
+        <NavLink to="/clubs" className={linkClass}>
+          <span>🏟️</span> Clubs
+        </NavLink>
+        {isSuperAdmin && (
+          <NavLink to="/admin/clubs" className={linkClass}>
+            <span>🛠️</span> Manage clubs
           </NavLink>
         )}
         <NavLink to="/profile" className={linkClass}>
@@ -40,6 +48,7 @@ export default function Sidebar() {
             <div className="sidebar-user-role">{label(ROLE_LABEL, user?.role)}</div>
           </div>
         </div>
+        <Link to="/change-password" className="form-link" style={{ fontSize: ".8rem" }}>Change password</Link>
         <button
           className="btn btn-ghost btn-sm"
           onClick={() => { logout(); navigate("/"); }}

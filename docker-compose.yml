@@ -63,6 +63,9 @@ services:
       LOGIN_THROTTLE_LIMIT: ${LOGIN_THROTTLE_LIMIT:-5}
       REGISTER_THROTTLE_LIMIT: ${REGISTER_THROTTLE_LIMIT:-5}
       REFRESH_THROTTLE_LIMIT: ${REFRESH_THROTTLE_LIMIT:-30}
+      # L-02: the platform super-admin, created or promoted at boot (idempotent).
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+      SUPERADMIN_INITIAL_PASSWORD: ${SUPERADMIN_INITIAL_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
