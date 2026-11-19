@@ -1,0 +1,5 @@
+# Built inside the image; never copy the host's (Windows) node_modules or a stale dist.
+node_modules
+dist
+*.tsbuildinfo
+.env

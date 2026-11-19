@@ -36,3 +36,14 @@ export const LOGIN_THROTTLE_LIMIT = (() => {
   const n = Number(process.env.LOGIN_THROTTLE_LIMIT);
   return Number.isInteger(n) && n > 0 ? n : 5;
 })();
+
+const positiveInt = (raw: string | undefined, fallback: number) => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+};
+
+/** Sign-ups allowed per client per 10 minutes (default 5); CI/E2E raise it (B-15). */
+export const REGISTER_THROTTLE_LIMIT = positiveInt(process.env.REGISTER_THROTTLE_LIMIT, 5);
+
+/** Token refreshes allowed per client per minute (default 30): a busy tab refreshes once an hour. */
+export const REFRESH_THROTTLE_LIMIT = positiveInt(process.env.REFRESH_THROTTLE_LIMIT, 30);

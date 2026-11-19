@@ -16,8 +16,12 @@ import { requireJwtSecret, LOGIN_THROTTLE_LIMIT } from '../env';
       secret: requireJwtSecret(),
       signOptions: { expiresIn: '1h' },
     }),
-    // Login attempts per IP per 60s (default 5, env LOGIN_THROTTLE_LIMIT); see @Throttle() on AuthController#login
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: LOGIN_THROTTLE_LIMIT }]),
+    // Default bucket; login, register and refresh set their own limits with
+    // @Throttle() on AuthController. A plain message, not "ThrottlerException" (B-15).
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60000, limit: LOGIN_THROTTLE_LIMIT }],
+      errorMessage: 'Too many attempts, try again in a minute.',
+    }),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtGuard, AuditLogger],

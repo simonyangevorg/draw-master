@@ -21,13 +21,14 @@ async function signUp(request, name) {
 const bearer = (token) => ({ Authorization: `Bearer ${token}` });
 
 test.describe('anonymous callers cannot write', () => {
-  test('player-service writes are refused', async ({ request }) => {
+  // player-service is retired (L-18): its routes are gone from the gateway.
+  test('the retired player-service routes are not reachable', async ({ request }) => {
     const created = await request.post('/api/players/', { data: { name: 'Forged' } });
-    expect([401, 403]).toContain(created.status());
+    expect([401, 403, 404]).toContain(created.status());
     const patched = await request.patch(`/api/players/${FAKE_ID}`, { data: { name: 'x' } });
-    expect([401, 403]).toContain(patched.status());
+    expect([401, 403, 404]).toContain(patched.status());
     const deleted = await request.delete(`/api/players/${FAKE_ID}`);
-    expect([401, 403]).toContain(deleted.status());
+    expect([401, 403, 404]).toContain(deleted.status());
   });
 
   test('stats cannot be forged from outside', async ({ request }) => {

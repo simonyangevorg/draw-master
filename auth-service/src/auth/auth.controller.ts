@@ -9,7 +9,7 @@ import { LoginDto } from './dto/login.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtGuard } from './jwt.guard';
-import { LOGIN_THROTTLE_LIMIT } from '../env';
+import { LOGIN_THROTTLE_LIMIT, REGISTER_THROTTLE_LIMIT, REFRESH_THROTTLE_LIMIT } from '../env';
 import { JwtService } from '@nestjs/jwt';
 import { Request, Response } from 'express';
 
@@ -20,7 +20,12 @@ export class AuthController {
     private readonly jwtService: JwtService,
   ) {}
 
+  // Every unauthenticated auth endpoint is rate-limited per client IP (B-15).
+  // The IP is the real client's: the gateway resolves it (real_ip) and
+  // overwrites X-Forwarded-For with just that address; main.ts trusts one hop.
   @Post('register')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { ttl: 600000, limit: REGISTER_THROTTLE_LIMIT } })
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
@@ -35,6 +40,8 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { ttl: 60000, limit: REFRESH_THROTTLE_LIMIT } })
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto);
   }

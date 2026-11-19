@@ -67,8 +67,8 @@ The drill loads the dump into a throwaway Postgres container and compares row co
 ```bash
 cd /path/to/tennis-project
 
-# 1. Back up FIRST. This is mandatory while services run with synchronize:true,
-#    which lets any deploy change the schema. (Migrations replace that in L-01.)
+# 1. Back up FIRST. Services run their pending database migrations on boot
+#    (L-01), so a release can change the schema; the dump is your undo.
 infra/backup/backup.sh pre-deploy
 
 # 2. Note the current version so you can roll back.
@@ -77,8 +77,9 @@ git rev-parse --short HEAD > .last-deployed
 # 3. Get the release.
 git fetch --tags && git checkout <tag-or-main> && git pull --ff-only
 
-# 4. Build and start.
-docker compose up -d --build
+# 4. Build and start. Migrations run as each service boots; a failing one
+#    stops that service (it restarts and logs the error) without half-applying.
+docker compose up -d --build --remove-orphans
 
 # 5. ALWAYS restart the gateway after recreating services: nginx caches the
 #    containers' internal IPs, and stale ones produce confusing 404s.
@@ -108,6 +109,8 @@ git checkout $(cat .last-deployed)
 docker compose up -d --build && docker compose restart api-gateway
 ```
 Data damaged by the release: restore the pre-deploy dump (section 4).
+
+**Migrations and rollback.** Migrations only move forward; older code does not undo them. Rolling back to a release that already uses migrations is safe while newer schema changes are only additions (all of them are, so far). **Never roll back to a release from before Sprint 1** (before commit `6eb7223`, L-01): that code runs TypeORM `synchronize`, which drops columns it doesn't know (`nextSlot`, `payload`) and the case-insensitive email index, while the `migrations` tables still say they exist, so the next forward deploy breaks. If it happens anyway, restore the pre-deploy dump (section 4), or run `DELETE FROM migrations WHERE name <> 'Baseline1763600000000';` in the `auth`, `tournaments` and `stats` databases and deploy forward again.
 
 ### 2.3 Tag releases
 After a successful deploy, on your dev machine:
@@ -146,11 +149,29 @@ Sprint 0 closes holes that were open on the live site, so after deploying it:
 
 ---
 
+## 3a. Sprint 1 rollout: one-off steps
+
+1. **Before deploying, check for accounts that differ only by email case.** The B-12 migration refuses to run if there are any: auth-service would not start and the deploy would roll back to pre-Sprint-1 code, which is the case section 2.2 warns about.
+   ```bash
+   U=$(grep ^POSTGRES_USER= .env | cut -d= -f2)
+   docker compose exec -T postgres psql -U $U -d auth -c "SELECT lower(trim(email)), count(*) FROM users GROUP BY 1 HAVING count(*) > 1;"
+   ```
+   No rows: go ahead. Any rows: decide which account to keep and rename or delete the other by hand first.
+2. **Deploy** (section 2). On first boot each service records its Baseline migration against the existing schema (nothing is recreated), then applies the Sprint 1 migrations: `tournament_matches.nextSlot`, `processed_events.payload`, and lower-cased emails with a unique index.
+3. **Check** that each service ran them:
+   ```bash
+   for db in auth tournaments stats notifications; do docker compose exec -T postgres psql -U $U -d $db -tc 'SELECT name FROM migrations ORDER BY id'; done
+   ```
+4. **player-service is gone** (L-18). `--remove-orphans` stops its container. The `players` database stays on the volume, unused; once you're sure nothing needs it, drop it: `docker compose exec -T postgres psql -U $U -d postgres -c 'DROP DATABASE players;'` (and `matches` the same way, if it exists).
+5. **Login throttling now keys on the real client IP** (B-15), which the gateway reads from the host proxy's `X-Forwarded-For`. After deploying, sign in once from a phone on mobile data and once from Wi-Fi, then check the gateway saw two different public IPs: `docker compose logs api-gateway --since 10m | grep 'POST /api/auth/login'`. If every line starts with the same private 172.x/10.x address, the host proxy isn't sending `X-Forwarded-For`; add `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` to its site config and reload it.
+
+---
+
 ## 4. Restoring from a backup (disaster recovery)
 
 This overwrites live data with the dump. Stop writes first.
 ```bash
-docker compose stop api-gateway frontend auth-service tournament-service stats-service notification-service player-service
+docker compose stop api-gateway frontend auth-service tournament-service stats-service notification-service
 # fetch the dump from off-server storage if the local one is gone:
 #   rclone copy b2:drawmaster-backups/drawmaster-<stamp>.sql.gz backups/
 U=$(grep ^POSTGRES_USER= .env | cut -d= -f2)
@@ -182,6 +203,6 @@ Then run the smoke test (2.1). Writes made after the dump was taken are lost; te
 ## 6. Known operational gaps (tracked in the dev plan)
 
 - **stats-service and notification-service run in dev mode (`npm run start:dev`, a file watcher) in their containers.** This uses more memory and starts slowly. Switching them to production builds is fixed in Sprint 1.
-- **`synchronize: true` in every service.** The schema changes on deploy, which is why the pre-deploy backup is mandatory. Replaced by migrations in L-01 (Sprint 1).
+- **Schema changes go through migrations** (L-01). After changing an entity, run `npm run migration:generate src/migrations/<Name>` in that service against a database at the current schema, review the SQL, and add the class to `src/migrations/index.ts`. CI's `migrations-check` job fails if this is forgotten.
 - **No error tracking or analytics yet** (L-15, Sprint 5).
 - **Dead-letter queue:** failed events are logged and dropped rather than parked in a dead-letter queue, because adding queue arguments to the existing durable queues would need a coordinated queue re-declare. Replay is via `rebuild-stats.js`.

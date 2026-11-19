@@ -38,7 +38,8 @@ log "backing up databases"
 bash infra/backup/backup.sh "pre-deploy-${SHA:0:7}"
 
 build_and_start() {
-  docker compose up -d --build
+  # --remove-orphans stops containers of services that were removed (L-18).
+  docker compose up -d --build --remove-orphans
   # nginx caches upstream IPs; recreated containers get new ones.
   docker compose restart api-gateway
 }

@@ -14,7 +14,6 @@ jobs:
       matrix:
         service:
           - auth-service
-          - player-service
           - tournament-service
           - stats-service
           - notification-service
@@ -118,6 +117,8 @@ jobs:
           RABBITMQ_DEFAULT_USER=tennis
           RABBITMQ_DEFAULT_PASS=tennis_secret
           LOGIN_THROTTLE_LIMIT=1000
+          REGISTER_THROTTLE_LIMIT=1000
+          REFRESH_THROTTLE_LIMIT=1000
           EOF
       - name: Start the full stack
         run: docker compose up -d --build
