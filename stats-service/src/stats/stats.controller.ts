@@ -4,6 +4,17 @@ import { StatsService } from './stats.service';
 import { MatchResultDto } from './dto/match-result.dto';
 import { SeedingRequestDto } from './dto/seeding-request.dto';
 
+/** Maps a tournament-service result event onto the stats DTO (player IDs, not participant IDs). */
+const toResult = (event: any): MatchResultDto => ({
+  matchId: event.matchId,
+  player1Id: event.player1Id,
+  player2Id: event.player2Id,
+  winnerId: event.winnerPlayerId,
+  sets: event.sets ?? [],
+  surface: (event.surface ?? '').toLowerCase(),
+  tournamentId: event.tournamentId,
+});
+
 @Controller()
 export class StatsController {
   private readonly logger = new Logger(StatsController.name);
@@ -16,26 +27,29 @@ export class StatsController {
   // message MUST be acked or nacked, otherwise the channel stalls after the
   // first event and nothing else is ever consumed.
   @EventPattern('match.completed')
-  async handleMatchCompleted(@Payload() event: any, @Ctx() ctx: RmqContext) {
+  handleMatchCompleted(@Payload() event: any, @Ctx() ctx: RmqContext) {
+    return this.consume('match.completed', event, ctx, () => this.statsService.recordResult(toResult(event)));
+  }
+
+  // A re-scored match (B-18): reverse what was counted and count the new result.
+  @EventPattern('match.corrected')
+  handleMatchCorrected(@Payload() event: any, @Ctx() ctx: RmqContext) {
+    return this.consume('match.corrected', event, ctx, () => this.statsService.correctResult({
+      ...toResult(event),
+      previous: event.previous ? toResult(event.previous) : undefined,
+    }));
+  }
+
+  private async consume(pattern: string, event: any, ctx: RmqContext, work: () => Promise<unknown>) {
     const channel = ctx.getChannelRef();
     const message = ctx.getMessage();
     try {
-      await this.statsService.recordResult({
-        matchId: event.matchId,
-        player1Id: event.player1Id,
-        player2Id: event.player2Id,
-        winnerId: event.winnerPlayerId,
-        sets: event.sets,
-        surface: (event.surface ?? '').toLowerCase(),
-        tournamentId: event.tournamentId,
-      });
+      await work();
       channel.ack(message);
     } catch (err) {
       // Don't requeue: a poison message would redeliver forever. Log the
       // payload so it can be replayed by hand once the cause is fixed.
-      this.logger.error(
-        `match.completed failed, dropping: ${(err as Error).message} payload=${JSON.stringify(event)}`,
-      );
+      this.logger.error(`${pattern} failed, dropping: ${(err as Error).message} payload=${JSON.stringify(event)}`);
       channel.nack(message, false, false);
     }
   }

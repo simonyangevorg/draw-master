@@ -56,3 +56,24 @@ describe('Stats persistence (integration, real Postgres)', () => {
     expect(stats.matchesPlayed).toBe(1);
   });
 });
+
+describe('Result correction (integration, real Postgres, B-18)', () => {
+  let app: INestApplication;
+  afterEach(async () => { if (app) await app.close(); });
+
+  it('score, then correct: wins/losses flip and H2H is fixed', async () => {
+    app = await buildApp();
+    const svc = app.get(StatsService);
+    const tag = `corr-${Date.now()}`;
+    const [a, b] = [`${tag}-a`, `${tag}-b`];
+    const base = { matchId: `${tag}-m`, tournamentId: `${tag}-t`, player1Id: a, player2Id: b, surface: 'clay' };
+
+    await svc.recordResult({ ...base, winnerId: a, sets: [{ p1: 6, p2: 3 }, { p1: 6, p2: 4 }] });
+    await svc.correctResult({ ...base, winnerId: b, sets: [{ p1: 3, p2: 6 }, { p1: 4, p2: 6 }] });
+
+    expect(await svc.getPlayerStats(a)).toMatchObject({ matchesPlayed: 1, wins: 0, losses: 1, setsWon: 0, setsLost: 2 });
+    expect(await svc.getPlayerStats(b)).toMatchObject({ matchesPlayed: 1, wins: 1, losses: 0, setsWon: 2, setsLost: 0 });
+    expect(await svc.getH2HRecord(a, b)).toMatchObject({ wins: 0, losses: 1 });
+    expect(await svc.getH2HRecord(b, a)).toMatchObject({ wins: 1, losses: 0 });
+  });
+});

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { StatsService } from './stats.service';
 import { PlayerStatsEntity } from './entities/player-stats.entity';
 import { H2HEntity } from './entities/h2h.entity';
@@ -41,6 +42,14 @@ describe('StatsService', () => {
         { provide: getRepositoryToken(PlayerStatsEntity), useValue: mockStatsRepo },
         { provide: getRepositoryToken(H2HEntity), useValue: mockH2HRepo },
         { provide: getRepositoryToken(ProcessedEventEntity), useValue: mockProcessedRepo },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: async (work: any) => work({
+              getRepository: (e: any) => (e === PlayerStatsEntity ? mockStatsRepo : e === H2HEntity ? mockH2HRepo : mockProcessedRepo),
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -108,7 +117,10 @@ describe('StatsService', () => {
         sets: [{ p1: 6, p2: 4 }],
       });
 
-      expect(mockProcessedRepo.save).toHaveBeenCalledWith({ matchId: 'm-new' });
+      expect(mockProcessedRepo.save).toHaveBeenCalledWith({
+        matchId: 'm-new',
+        payload: expect.objectContaining({ player1Id: 'p1', player2Id: 'p2', winnerId: 'p1', sets: [{ p1: 6, p2: 4 }] }),
+      });
     });
   });
 
@@ -154,6 +166,71 @@ describe('StatsService', () => {
       });
 
       expect(p1Stats.surfaceWins.hard).toBe(1);
+    });
+  });
+
+  describe('correctResult (B-18)', () => {
+    const fresh = (id: string) => ({ playerId: id, matchesPlayed: 0, wins: 0, losses: 0, setsWon: 0, setsLost: 0, surfaceWins: { clay: 0, grass: 0, hard: 0 }, tournamentWins: 0 });
+    let stats: Record<string, any>;
+    let h2h: Record<string, any>;
+    let processed: any;
+    beforeEach(() => {
+      stats = { p1: fresh('p1'), p2: fresh('p2') };
+      h2h = {};
+      processed = null;
+      mockStatsRepo.findOne.mockImplementation(async ({ where }) => stats[where.playerId] ?? null);
+      mockStatsRepo.create.mockImplementation((d) => (stats[d.playerId] = d));
+      mockH2HRepo.findOne.mockImplementation(async ({ where }) => h2h[where.playerId + '>' + where.opponentId] ?? null);
+      mockH2HRepo.create.mockImplementation((d) => (h2h[d.playerId + '>' + d.opponentId] = d));
+      mockProcessedRepo.findOne.mockImplementation(async () => processed);
+      mockProcessedRepo.save.mockImplementation(async (e) => (processed = e));
+    });
+    const result = (winnerId: string, sets: any[]) => ({
+      matchId: 'm1', tournamentId: 't1', player1Id: 'p1', player2Id: 'p2', winnerId, sets, surface: 'clay',
+    });
+    const P1_WINS = [{ p1: 6, p2: 3 }, { p1: 6, p2: 2 }];
+    const P2_WINS = [{ p1: 3, p2: 6 }, { p1: 2, p2: 6 }];
+
+    it('flips wins, losses, sets, surface and H2H when the winner changes', async () => {
+      await service.recordResult(result('p1', P1_WINS));
+      await service.correctResult(result('p2', P2_WINS));
+
+      expect(stats.p1).toMatchObject({ matchesPlayed: 1, wins: 0, losses: 1, setsWon: 0, setsLost: 2 });
+      expect(stats.p2).toMatchObject({ matchesPlayed: 1, wins: 1, losses: 0, setsWon: 2, setsLost: 0 });
+      expect(stats.p1.surfaceWins.clay).toBe(0);
+      expect(stats.p2.surfaceWins.clay).toBe(1);
+      expect(h2h['p1>p2']).toMatchObject({ wins: 0, losses: 1 });
+      expect(h2h['p2>p1']).toMatchObject({ wins: 1, losses: 0 });
+      expect(processed.payload.winnerId).toBe('p2');
+    });
+
+    it('a redelivered correction changes nothing', async () => {
+      await service.recordResult(result('p1', P1_WINS));
+      await service.correctResult(result('p2', P2_WINS));
+      const r = await service.correctResult(result('p2', P2_WINS));
+      expect(r.unchanged).toBe(true);
+      expect(stats.p2).toMatchObject({ wins: 1, matchesPlayed: 1 });
+    });
+
+    it('a score-only correction fixes the set counts', async () => {
+      await service.recordResult(result('p1', P1_WINS));
+      await service.correctResult(result('p1', [{ p1: 6, p2: 3 }, { p1: 3, p2: 6 }, { p1: 6, p2: 1 }]));
+      expect(stats.p1).toMatchObject({ wins: 1, setsWon: 2, setsLost: 1 });
+      expect(stats.p2).toMatchObject({ losses: 1, setsWon: 1, setsLost: 2 });
+    });
+
+    it('rows from before B-18 (no payload) are reversed using the event previous result', async () => {
+      await service.recordResult(result('p1', P1_WINS));
+      processed = { matchId: 'm1', payload: null };
+      await service.correctResult({ ...result('p2', P2_WINS), previous: result('p1', P1_WINS) });
+      expect(stats.p1).toMatchObject({ wins: 0, losses: 1 });
+      expect(stats.p2).toMatchObject({ wins: 1, losses: 0 });
+    });
+
+    it('a correction for a match never counted just counts it', async () => {
+      await service.correctResult(result('p2', P2_WINS));
+      expect(stats.p2).toMatchObject({ wins: 1, matchesPlayed: 1 });
+      expect(stats.p1).toMatchObject({ losses: 1, matchesPlayed: 1 });
     });
   });
 
