@@ -8,7 +8,10 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
-    "test:integration": "jest --config jest.integration.config.js"
+    "test:integration": "jest --config jest.integration.config.js",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/data-source.ts",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
+    "migration:check": "typeorm-ts-node-commonjs migration:generate src/migrations/Unexpected -d src/data-source.ts --check"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",

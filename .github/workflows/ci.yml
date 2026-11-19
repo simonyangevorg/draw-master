@@ -30,6 +30,46 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: npm test
 
+  # L-01: the schema is owned by migrations. Build a fresh DB from them and fail
+  # if the entities describe anything the migrations don't (a forgotten
+  # migration:generate after an entity change).
+  migrations-check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - tournament-service
+          - stats-service
+          - notification-service
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tennis
+          POSTGRES_PASSWORD: tennis_secret
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        working-directory: ${{ matrix.service }}
+        run: npm ci
+      - name: Run migrations on an empty DB, then check for schema drift
+        working-directory: ${{ matrix.service }}
+        run: npm run migration:run && npm run migration:check
+        env:
+          DATABASE_URL: postgresql://tennis:tennis_secret@localhost:5432/test
+
   integration-tests:
     runs-on: ubuntu-latest
     strategy:

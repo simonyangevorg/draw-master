@@ -7,7 +7,10 @@
     "start": "node dist/main",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/data-source.ts",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
+    "migration:check": "typeorm-ts-node-commonjs migration:generate src/migrations/Unexpected -d src/data-source.ts --check"
   },
   "dependencies": {
     "@nestjs/axios": "^3.0.2",
