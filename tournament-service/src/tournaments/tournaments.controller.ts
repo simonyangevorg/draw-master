@@ -12,6 +12,7 @@ import { SwapDrawDto } from './dto/swap-draw.dto';
 import { AssignSeedDto } from './dto/assign-seed.dto';
 import { UpdateDrawSlotDto } from './dto/update-draw-slot.dto';
 import { CreateEventDto, EventRefDto, UpdateEventDto } from './dto/event.dto';
+import { CreatePresetDto, UpdatePresetDto } from './dto/rules.dto';
 import { JwtGuard } from '../auth/jwt.guard';
 import { CurrentUser, OptionalUser } from '../auth/current-user.decorator';
 
@@ -56,6 +57,36 @@ export class TournamentsController {
   @UseGuards(JwtGuard)
   getMyParticipations(@CurrentUser() user: CurrentUser) {
     return this.tournamentsService.getMyParticipations(user.sub);
+  }
+
+  // ── Match rule presets (F-05) ────────────
+  // Declared before tournaments/:id so "rule-presets" isn't taken for an id.
+
+  /** Built-in presets, plus ?clubId=...'s own for its members. */
+  @Get('tournaments/rule-presets')
+  @UseGuards(JwtGuard)
+  listPresets(@CurrentUser() user: CurrentUser, @Query('clubId') clubId?: string) {
+    return this.tournamentsService.listPresets(user, clubId || undefined);
+  }
+
+  @Post('tournaments/rule-presets')
+  @HttpCode(201)
+  @UseGuards(JwtGuard)
+  createPreset(@Body() dto: CreatePresetDto, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.createPreset(dto, user);
+  }
+
+  @Patch('tournaments/rule-presets/:pid')
+  @UseGuards(JwtGuard)
+  updatePreset(@Param('pid', ParseUUIDPipe) pid: string, @Body() dto: UpdatePresetDto, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.updatePreset(pid, dto, user);
+  }
+
+  @Delete('tournaments/rule-presets/:pid')
+  @HttpCode(204)
+  @UseGuards(JwtGuard)
+  deletePreset(@Param('pid', ParseUUIDPipe) pid: string, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.deletePreset(pid, user);
   }
 
   @Get('tournaments/:id')

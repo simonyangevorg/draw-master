@@ -9,6 +9,8 @@ import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
 import { ClubRefEntity } from './entities/club-ref.entity';
 import { EventEntity } from './entities/event.entity';
+import { RulePresetEntity } from './entities/rule-preset.entity';
+import { DEFAULT_RULES, legacyRules, rulesFor } from './rules';
 import { AuditLogger } from '../audit/audit-logger.service';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
@@ -55,8 +57,7 @@ function makeTournament(overrides: Partial<TournamentEntity> | any = {}): Tourna
  * format on the tournament; that becomes its single event, 'event-1', so the
  * one-event path is what they keep testing.
  */
-const FORMAT_KEYS = ['drawFormat', 'maxParticipants', 'minParticipants', 'seeded', 'numberOfGroups', 'advancePerGroup',
-  'setsToWin', 'gamesPerSet', 'tiebreakAt', 'finalSetTiebreak', 'noAd'];
+const FORMAT_KEYS = ['drawFormat', 'maxParticipants', 'minParticipants', 'seeded', 'numberOfGroups', 'advancePerGroup'];
 function withEvents(t: any) {
   if (!t.events) {
     const type = t.tournamentType ?? 'SINGLES_MEN';
@@ -69,6 +70,9 @@ function withEvents(t: any) {
       discipline: type.startsWith('SINGLES') ? 'SINGLES' : 'DOUBLES',
       status: t.status === 'COMPLETED' || t.status === 'CANCELLED' ? t.status : t.status,
       ...Object.fromEntries(FORMAT_KEYS.map((k) => [k, t[k]])),
+      groupRules: legacyRules(t) ?? DEFAULT_RULES,
+      knockoutRules: legacyRules(t) ?? DEFAULT_RULES,
+      finalRules: null,
     }];
   }
   return t;
@@ -124,6 +128,7 @@ describe('TournamentsService', () => {
   };
   const mockClubsRepo = { find: jest.fn().mockResolvedValue([]), findOne: jest.fn().mockResolvedValue(null), save: jest.fn(), create: jest.fn((d) => d) };
   const mockEventsRepo = { save: jest.fn(async (e) => e), create: jest.fn((d) => d), remove: jest.fn() };
+  const mockPresetsRepo = { find: jest.fn(), findOne: jest.fn(), save: jest.fn(async (p) => p), create: jest.fn((d) => d), remove: jest.fn() };
   const mockStatsClient = { emit: jest.fn() };
   const mockNotificationsClient = { emit: jest.fn() };
   const mockAuditLogger = { record: jest.fn() };
@@ -143,6 +148,8 @@ describe('TournamentsService', () => {
     mockClubsRepo.find.mockResolvedValue([]);
     mockClubsRepo.findOne.mockResolvedValue(null);
     mockEventsRepo.save.mockImplementation(async (e) => e);
+    mockPresetsRepo.save.mockImplementation(async (p) => p);
+    mockPresetsRepo.create.mockImplementation((d) => d);
     mockQueryRunner.manager.save = mockMatchesRepo.save;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -154,6 +161,7 @@ describe('TournamentsService', () => {
         { provide: getRepositoryToken(TournamentGroupEntity), useValue: mockGroupsRepo },
         { provide: getRepositoryToken(ClubRefEntity), useValue: mockClubsRepo },
         { provide: getRepositoryToken(EventEntity), useValue: mockEventsRepo },
+        { provide: getRepositoryToken(RulePresetEntity), useValue: mockPresetsRepo },
         { provide: DataSource, useValue: mockDataSource },
         { provide: 'STATS_CLIENT', useValue: mockStatsClient },
         { provide: 'NOTIFICATIONS_CLIENT', useValue: mockNotificationsClient },
@@ -251,7 +259,7 @@ describe('TournamentsService', () => {
     it('applies default values when optional fields are omitted (visibility CLUB)', async () => {
       mockTournamentsRepo.create.mockImplementation((data) => data);
       const result: any = await service.create({ ...baseDto, events: [{ name: 'Main', drawFormat: 'SINGLE_ELIMINATION' }] } as any, ADMIN_A);
-      expect(result.events[0]).toMatchObject({ maxParticipants: 32, minParticipants: 4, setsToWin: 2, gamesPerSet: 6, seeded: true });
+      expect(result.events[0]).toMatchObject({ maxParticipants: 32, minParticipants: 4, seeded: true, groupRules: DEFAULT_RULES, knockoutRules: DEFAULT_RULES, finalRules: null });
       expect(result.visibility).toBe('CLUB');
       expect(result.requiresApproval).toBe(false);
       expect((result as any).access).toEqual({ canManage: true, canEnter: true });
@@ -1409,6 +1417,123 @@ describe('TournamentsService', () => {
         mockTournamentsRepo.findOne.mockResolvedValue(t);
         await service.open('tournament-1', ADMIN);
         expect(t.events.map((e) => e.status)).toEqual(['OPEN', 'OPEN']);
+      });
+    });
+  });
+
+  describe('match rules and presets (F-05)', () => {
+    const ADMIN = actor('admin-a', [{ id: 'club-a', role: 'ADMIN' }]);
+    const MEMBER = actor('m', [{ id: 'club-a', role: 'MEMBER' }]);
+    const MTB = { bestOf: 3, gamesPerSet: 6, tiebreakAt: 6, decidingSet: 'MATCH_TIEBREAK_10', noAd: false } as const;
+    const ONE_SET = { bestOf: 1, gamesPerSet: 6, tiebreakAt: 6, decidingSet: 'FULL', noAd: false } as const;
+    const PRO_SET = { bestOf: 1, gamesPerSet: 8, tiebreakAt: 8, decidingSet: 'FULL', noAd: false } as const;
+
+    it('rulesFor: groups use group rules, the final its override, other knockout rounds the knockout rules', () => {
+      const ev = { drawFormat: 'GROUP_STAGE_KNOCKOUT', groupRules: ONE_SET, knockoutRules: MTB, finalRules: PRO_SET } as any;
+      expect(rulesFor(ev, { stage: 'GROUP', nextMatchId: null })).toBe(ONE_SET);
+      expect(rulesFor(ev, { stage: 'KNOCKOUT', nextMatchId: 'semi→final' })).toBe(MTB);
+      expect(rulesFor(ev, { stage: 'KNOCKOUT', nextMatchId: null })).toBe(PRO_SET);
+      expect(rulesFor({ ...ev, finalRules: null }, { stage: 'KNOCKOUT', nextMatchId: null })).toBe(MTB);
+      // round robin plays under the group rules
+      expect(rulesFor({ ...ev, drawFormat: 'ROUND_ROBIN' }, { stage: 'KNOCKOUT', nextMatchId: null })).toBe(ONE_SET);
+    });
+
+    it('the draw tells the UI which rules each match is played under', async () => {
+      const t = makeTournament({
+        events: [{ id: 'event-1', drawFormat: 'SINGLE_ELIMINATION', groupRules: ONE_SET, knockoutRules: MTB, finalRules: PRO_SET, status: 'IN_PROGRESS' }],
+      } as any);
+      mockTournamentsRepo.findOne.mockResolvedValue(t);
+      mockMatchesRepo.find.mockResolvedValue([
+        { id: 'semi', eventId: 'event-1', stage: 'KNOCKOUT', nextMatchId: 'final' },
+        { id: 'final', eventId: 'event-1', stage: 'KNOCKOUT', nextMatchId: null },
+      ]);
+      const draw: any[] = await service.getDraw('tournament-1', null);
+      expect(draw.map((m) => [m.id, m.rulesStage, m.rules.bestOf])).toEqual([['semi', 'KNOCKOUT', 3], ['final', 'FINAL', 1]]);
+    });
+
+    it('an event takes per-stage rules on create; groups default to the knockout rules', async () => {
+      mockClubsRepo.findOne.mockResolvedValue({ id: 'club-a', name: 'A', slug: 'a', status: 'ACTIVE' });
+      mockTournamentsRepo.create.mockImplementation((d) => d);
+      mockTournamentsRepo.save.mockImplementation(async (x) => x);
+      const t: any = await service.create({
+        name: 'Rules Open', clubId: 'club-a', startDate: '2099-01-01', endDate: '2099-01-02', surface: 'CLAY',
+        events: [{ name: 'Main', drawFormat: 'GROUP_STAGE_KNOCKOUT', knockoutRules: { ...MTB, tiebreakAt: undefined }, finalRules: PRO_SET }],
+      } as any, ADMIN);
+      expect(t.events[0].knockoutRules).toEqual(MTB); // tiebreakAt filled from gamesPerSet
+      expect(t.events[0].groupRules).toEqual(MTB);
+      expect(t.events[0].finalRules).toEqual(PRO_SET);
+    });
+
+    it('older clients: setsToWin/finalSetTiebreak become the group and knockout rules', async () => {
+      mockClubsRepo.findOne.mockResolvedValue({ id: 'club-a', name: 'A', slug: 'a', status: 'ACTIVE' });
+      mockTournamentsRepo.create.mockImplementation((d) => d);
+      mockTournamentsRepo.save.mockImplementation(async (x) => x);
+      const t: any = await service.create({
+        name: 'Old client', clubId: 'club-a', startDate: '2099-01-01', endDate: '2099-01-02', surface: 'CLAY',
+        tournamentType: 'SINGLES_MEN', drawFormat: 'SINGLE_ELIMINATION', setsToWin: 2, finalSetTiebreak: true,
+      } as any, ADMIN);
+      expect(t.events[0].knockoutRules).toEqual(MTB);
+      expect(t.events[0].groupRules).toEqual(MTB);
+    });
+
+    it('refuses an unplayable rule set', async () => {
+      mockTournamentsRepo.findOne.mockResolvedValue(makeTournament({ status: 'DRAFT' } as any));
+      await expect(service.updateEvent('tournament-1', 'event-1', { knockoutRules: { ...ONE_SET, decidingSet: 'MATCH_TIEBREAK_10' } } as any, actor('organiser-1')))
+        .rejects.toThrow('one-set match');
+      await expect(service.updateEvent('tournament-1', 'event-1', { groupRules: { ...ONE_SET, gamesPerSet: 4, tiebreakAt: 6 } } as any, actor('organiser-1')))
+        .rejects.toThrow('tiebreakAt');
+    });
+
+    it('rules can change while entries are open, and lock once the event is drawn', async () => {
+      const open = makeTournament({ status: 'OPEN' } as any);
+      mockTournamentsRepo.findOne.mockResolvedValue(open);
+      const ev: any = await service.updateEvent('tournament-1', 'event-1', { finalRules: PRO_SET } as any, actor('organiser-1'));
+      expect(ev.finalRules).toEqual(PRO_SET);
+      const drawn = makeTournament({ status: 'IN_PROGRESS' } as any);
+      mockTournamentsRepo.findOne.mockResolvedValue(drawn);
+      await expect(service.updateEvent('tournament-1', 'event-1', { finalRules: null } as any, actor('organiser-1'))).rejects.toThrow('draw is made');
+    });
+
+    it('snapshot isolation: editing a club preset never changes an event that used it', async () => {
+      const preset = { id: 'p1', clubId: 'club-a', name: 'Club short sets', rules: { ...MTB } };
+      mockPresetsRepo.findOne.mockResolvedValue(preset);
+      mockPresetsRepo.find.mockResolvedValue([preset]);
+      // an event set up from the preset holds a copy of its rules
+      const t = makeTournament({ status: 'IN_PROGRESS', events: [{ id: 'event-1', drawFormat: 'SINGLE_ELIMINATION', status: 'IN_PROGRESS', groupRules: { ...preset.rules }, knockoutRules: { ...preset.rules }, finalRules: null }] } as any);
+      await service.updatePreset('p1', { rules: ONE_SET } as any, ADMIN);
+      expect(preset.rules).toEqual(ONE_SET);
+      expect(t.events[0].knockoutRules).toEqual(MTB);
+      expect(mockEventsRepo.save).not.toHaveBeenCalled();
+    });
+
+    describe('presets', () => {
+      beforeEach(() => {
+        mockPresetsRepo.find.mockImplementation(async ({ where }) =>
+          (Array.isArray(where) ? [] : where.clubId?._type === 'isNull'
+            ? [{ id: 'b1', clubId: null, name: 'Best of 3, full sets' }]
+            : [{ id: 'c1', clubId: 'club-a', name: 'Club short sets' }]));
+      });
+
+      it('members see the built-ins plus their club\'s own', async () => {
+        expect((await service.listPresets(MEMBER, 'club-a')).map((p) => p.id)).toEqual(['b1', 'c1']);
+        expect((await service.listPresets(actor('x'))).map((p) => p.id)).toEqual(['b1']);
+        await expect(service.listPresets(actor('x'), 'club-a')).rejects.toThrow(ForbiddenException);
+      });
+
+      it('only club admins create presets, and names must be unique', async () => {
+        await expect(service.createPreset({ clubId: 'club-a', name: 'X', rules: MTB } as any, MEMBER)).rejects.toThrow(ForbiddenException);
+        mockPresetsRepo.find.mockResolvedValue([{ name: 'Short' }]);
+        await expect(service.createPreset({ clubId: 'club-a', name: 'short', rules: MTB } as any, ADMIN)).rejects.toThrow('already a preset');
+        mockPresetsRepo.find.mockResolvedValue([]);
+        const p: any = await service.createPreset({ clubId: 'club-a', name: 'Fast4', rules: { bestOf: 3, gamesPerSet: 4, decidingSet: 'MATCH_TIEBREAK_10', noAd: true } } as any, ADMIN);
+        expect(p).toMatchObject({ clubId: 'club-a', name: 'Fast4', rules: { tiebreakAt: 4 } });
+      });
+
+      it('built-ins cannot be edited or deleted; other clubs\' presets are off-limits', async () => {
+        mockPresetsRepo.findOne.mockResolvedValue({ id: 'b1', clubId: null, name: 'Built in' });
+        await expect(service.deletePreset('b1', ADMIN)).rejects.toThrow('Built-in');
+        mockPresetsRepo.findOne.mockResolvedValue({ id: 'c2', clubId: 'club-b', name: 'Theirs' });
+        await expect(service.deletePreset('c2', ADMIN)).rejects.toThrow(ForbiddenException);
       });
     });
   });

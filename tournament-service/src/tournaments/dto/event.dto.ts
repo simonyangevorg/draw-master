@@ -1,7 +1,9 @@
 import {
-  IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, MaxLength, Min,
+  IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Trim, IsAtMostField } from './validators';
+import { RuleSetDto } from './rules.dto';
 import { SUPPORTED_FORMATS } from './formats';
 
 /**
@@ -13,13 +15,39 @@ export const SUPPORTED_DISCIPLINES = ['SINGLES'];
 const NOT_YET = { message: '$property must be one of: $constraint1 (doubles, mixed and Double Elimination are not available yet)' };
 
 /** Fields that shape an event's draw: only changeable while the tournament is a DRAFT. */
+/**
+ * Match rules (F-05): editable until the event's draw is made, then locked.
+ * The pre-F-05 single-set-of-rules fields (setsToWin ...) are still accepted
+ * and become both the group and the knockout rules.
+ */
+export const EVENT_RULE_FIELDS = [
+  'groupRules', 'knockoutRules', 'finalRules',
+  'setsToWin', 'gamesPerSet', 'tiebreakAt', 'finalSetTiebreak', 'noAd',
+] as const;
+
 export const EVENT_FORMAT_FIELDS = [
   'category', 'discipline', 'drawFormat', 'maxParticipants', 'minParticipants', 'seeded',
-  'setsToWin', 'gamesPerSet', 'tiebreakAt', 'finalSetTiebreak', 'noAd',
   'numberOfGroups', 'advancePerGroup',
 ] as const;
 
 class EventFields {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RuleSetDto)
+  groupRules?: RuleSetDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RuleSetDto)
+  knockoutRules?: RuleSetDto;
+
+  /** Rules for the final only; null removes the override. */
+  @IsOptional()
+  @ValidateIf((o) => o.finalRules !== null)
+  @ValidateNested()
+  @Type(() => RuleSetDto)
+  finalRules?: RuleSetDto | null;
+
   @IsOptional()
   @IsIn(SUPPORTED_CATEGORIES, NOT_YET)
   category?: string;

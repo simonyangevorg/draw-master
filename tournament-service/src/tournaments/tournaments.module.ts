@@ -10,6 +10,7 @@ import { TournamentMatchEntity } from './entities/match.entity';
 import { TournamentGroupEntity } from './entities/group.entity';
 import { ClubRefEntity } from './entities/club-ref.entity';
 import { EventEntity } from './entities/event.entity';
+import { RulePresetEntity } from './entities/rule-preset.entity';
 import { JwtGuard } from '../auth/jwt.guard';
 import { AuditLogger } from '../audit/audit-logger.service';
 
@@ -22,6 +23,7 @@ import { AuditLogger } from '../audit/audit-logger.service';
       TournamentGroupEntity,
       ClubRefEntity,
       EventEntity,
+      RulePresetEntity,
     ]),
     ClientsModule.register([
       {

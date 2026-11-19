@@ -2,7 +2,7 @@ import {
   Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException, Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { ClientProxy } from '@nestjs/microservices';
 import { v4 as uuidv4 } from 'uuid';
 import { TournamentEntity } from './entities/tournament.entity';
@@ -12,7 +12,10 @@ import { TournamentGroupEntity } from './entities/group.entity';
 import { CreateTournamentDto, SUPPORTED_FORMATS } from './dto/create-tournament.dto';
 import { today } from './dto/validators';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
-import { CreateEventDto, UpdateEventDto, EVENT_FORMAT_FIELDS } from './dto/event.dto';
+import { CreateEventDto, UpdateEventDto, EVENT_FORMAT_FIELDS, EVENT_RULE_FIELDS } from './dto/event.dto';
+import { CreatePresetDto, UpdatePresetDto } from './dto/rules.dto';
+import { RulePresetEntity } from './entities/rule-preset.entity';
+import { DEFAULT_RULES, RuleSet, legacyRules, normaliseRules, ruleProblems, rulesFor, rulesStageOf } from './rules';
 import { TYPE_TO_EVENT } from './dto/formats';
 import { EventEntity } from './entities/event.entity';
 import { EnrollParticipantDto } from './dto/enroll-participant.dto';
@@ -20,7 +23,7 @@ import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
 import { AuditLogger } from '../audit/audit-logger.service';
 import { ClubRefEntity } from './entities/club-ref.entity';
-import { Actor, canEnter, canManage, canRead, isSuperAdmin, isClubAdmin } from './access';
+import { Actor, canEnter, canManage, canRead, isSuperAdmin, isClubAdmin, isClubMember } from './access';
 
 const GROUP_LETTERS = 'ABCDEFGH';
 
@@ -39,6 +42,8 @@ export class TournamentsService {
     private readonly clubsRepo: Repository<ClubRefEntity>,
     @InjectRepository(EventEntity)
     private readonly eventsRepo: Repository<EventEntity>,
+    @InjectRepository(RulePresetEntity)
+    private readonly presetsRepo: Repository<RulePresetEntity>,
     @Inject('STATS_CLIENT')
     private readonly statsClient: ClientProxy,
     @Inject('NOTIFICATIONS_CLIENT')
@@ -102,7 +107,17 @@ export class TournamentsService {
   async getDraw(tournamentId: string, actor?: Actor | null, eventId?: string) {
     const t = await this.findOne(tournamentId, actor);
     const where = eventId ? { tournamentId, eventId: this.eventOf(t, eventId).id } : { tournamentId };
-    return this.matchesRepo.find({ where, order: { round: 'ASC', position: 'ASC' } });
+    const matches = await this.matchesRepo.find({ where, order: { round: 'ASC', position: 'ASC' } });
+    return this.withRules(t, matches);
+  }
+
+  /** Adds each match's rules and rule stage (GROUP, KNOCKOUT or FINAL), from its event (F-05). */
+  private withRules(t: TournamentEntity, matches: TournamentMatchEntity[]) {
+    const events = new Map((t.events ?? []).map((e) => [e.id, e]));
+    return matches.map((m) => {
+      const ev = events.get(m.eventId);
+      return ev ? Object.assign(m, { rulesStage: rulesStageOf(ev, m), rules: rulesFor(ev, m) }) : m;
+    });
   }
 
   /** Adds the club's name and what this caller may do; the UI reads `access`, never ids. */
@@ -129,7 +144,7 @@ export class TournamentsService {
     const { events: eventDtos, ...fields } = dto as any;
     const events = this.eventsFrom(dto);
     // Only the tournament's own fields go on the tournament; the rest is per event.
-    for (const k of ['tournamentType', 'drawFormat', ...EVENT_FORMAT_FIELDS]) delete fields[k];
+    for (const k of ['tournamentType', 'drawFormat', ...EVENT_FORMAT_FIELDS, ...EVENT_RULE_FIELDS]) delete fields[k];
     const t = this.tournamentsRepo.create({
       ...fields,
       createdBy: actor.sub,
@@ -160,7 +175,7 @@ export class TournamentsService {
         category: TYPE_TO_EVENT[dto.tournamentType].category,
         discipline: TYPE_TO_EVENT[dto.tournamentType].discipline,
         drawFormat: dto.drawFormat,
-        ...EVENT_FORMAT_FIELDS.filter((k) => k !== 'category' && k !== 'discipline' && k !== 'drawFormat')
+        ...[...EVENT_FORMAT_FIELDS, ...EVENT_RULE_FIELDS].filter((k) => k !== 'category' && k !== 'discipline' && k !== 'drawFormat')
           .reduce((acc, k) => ({ ...acc, ...pick(k) }), {}),
       } as CreateEventDto];
     })();
@@ -184,12 +199,90 @@ export class TournamentsService {
       seeded: e.seeded ?? true,
       numberOfGroups: e.numberOfGroups ?? null,
       advancePerGroup: e.advancePerGroup ?? null,
-      setsToWin: e.setsToWin ?? 2,
-      gamesPerSet: e.gamesPerSet ?? 6,
-      tiebreakAt: e.tiebreakAt ?? 6,
-      finalSetTiebreak: e.finalSetTiebreak ?? false,
-      noAd: e.noAd ?? false,
+      ...this.stageRules(e),
     };
+  }
+
+  /**
+   * An event's rules per stage (F-05). Knockout defaults to "best of 3,
+   * full sets"; the group stage defaults to the knockout rules; the final
+   * has no override unless one is given. The older single set of rules
+   * (setsToWin ...) becomes both group and knockout rules.
+   */
+  private stageRules(e: any, current?: Pick<EventEntity, 'groupRules' | 'knockoutRules' | 'finalRules'>) {
+    const legacy = legacyRules(e);
+    const knockoutRules = this.checkedRules(e.knockoutRules ?? legacy ?? current?.knockoutRules ?? DEFAULT_RULES, 'knockoutRules');
+    const groupRules = this.checkedRules(e.groupRules ?? legacy ?? current?.groupRules ?? knockoutRules, 'groupRules');
+    const finalRules = e.finalRules === null ? null
+      : e.finalRules ? this.checkedRules(e.finalRules, 'finalRules')
+      : current?.finalRules ?? null;
+    return { groupRules, knockoutRules, finalRules };
+  }
+
+  private checkedRules(r: Partial<RuleSet>, field: string): RuleSet {
+    const rules = normaliseRules(r);
+    const problems = ruleProblems(rules);
+    if (problems.length) throw new BadRequestException(`${field}: ${problems.join('; ')}`);
+    return rules;
+  }
+
+  // ── MATCH RULE PRESETS (F-05) ─────────────
+
+  /** The built-in presets, plus the club's own when a club is given and the caller belongs to it. */
+  async listPresets(actor: Actor, clubId?: string) {
+    const builtIn = await this.presetsRepo.find({ where: { clubId: IsNull() }, order: { createdAt: 'ASC' } });
+    if (!clubId) return builtIn;
+    if (!isSuperAdmin(actor) && !isClubMember(actor, clubId)) throw new ForbiddenException('Not a member of this club');
+    const own = await this.presetsRepo.find({ where: { clubId }, order: { name: 'ASC' } });
+    return [...builtIn, ...own];
+  }
+
+  async createPreset(dto: CreatePresetDto, actor: Actor) {
+    this.assertClubAdmin(actor, dto.clubId);
+    await this.assertPresetNameFree(dto.clubId, dto.name);
+    const preset = await this.presetsRepo.save(this.presetsRepo.create({
+      clubId: dto.clubId, name: dto.name, rules: this.checkedRules(dto.rules, 'rules'), createdBy: actor.sub,
+    }));
+    this.auditLogger.record({ actorId: actor.sub, action: 'RULE_PRESET_CREATED', targetId: preset.id, clubId: dto.clubId });
+    return preset;
+  }
+
+  /**
+   * Editing a preset changes only the preset: events hold their own copies,
+   * so nothing already set up (let alone being played) changes with it.
+   */
+  async updatePreset(id: string, dto: UpdatePresetDto, actor: Actor) {
+    const preset = await this.loadClubPreset(id, actor);
+    if (dto.name && dto.name.toLowerCase() !== preset.name.toLowerCase()) await this.assertPresetNameFree(preset.clubId, dto.name);
+    if (dto.name) preset.name = dto.name;
+    if (dto.rules) preset.rules = this.checkedRules(dto.rules, 'rules');
+    return this.presetsRepo.save(preset);
+  }
+
+  async deletePreset(id: string, actor: Actor) {
+    const preset = await this.loadClubPreset(id, actor);
+    await this.presetsRepo.remove(preset);
+    this.auditLogger.record({ actorId: actor.sub, action: 'RULE_PRESET_DELETED', targetId: id, clubId: preset.clubId });
+  }
+
+  private async loadClubPreset(id: string, actor: Actor) {
+    const preset = await this.presetsRepo.findOne({ where: { id } });
+    if (!preset) throw new NotFoundException('Preset not found');
+    if (!preset.clubId) throw new ForbiddenException('Built-in presets cannot be changed');
+    this.assertClubAdmin(actor, preset.clubId);
+    return preset;
+  }
+
+  private assertClubAdmin(actor: Actor, clubId: string) {
+    if (!isSuperAdmin(actor) && !isClubAdmin(actor, clubId)) {
+      throw new ForbiddenException("Only an admin of this club can manage its presets");
+    }
+  }
+
+  private async assertPresetNameFree(clubId: string, name: string) {
+    const clash = (await this.presetsRepo.find({ where: [{ clubId }, { clubId: IsNull() }] }))
+      .some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+    if (clash) throw new BadRequestException(`There is already a preset called "${name}"`);
   }
 
   // ── EVENTS (F-01) ─────────────────────────
@@ -231,7 +324,12 @@ export class TournamentsService {
     if (dto.name && t.events.some((e) => e.id !== ev.id && e.name.toLowerCase() === dto.name.toLowerCase())) {
       throw new BadRequestException(`There is already an event called "${dto.name}"`);
     }
-    for (const [k, v] of Object.entries(dto)) if (v !== undefined) (ev as any)[k] = v;
+    const ruleChanges = EVENT_RULE_FIELDS.filter((k) => (dto as any)[k] !== undefined);
+    const rules = ruleChanges.length ? this.stageRules(dto, ev) : null;
+    for (const [k, v] of Object.entries(dto)) {
+      if (v !== undefined && !(EVENT_RULE_FIELDS as readonly string[]).includes(k)) (ev as any)[k] = v;
+    }
+    if (rules) Object.assign(ev, rules);
     return this.eventsRepo.save(ev);
   }
 

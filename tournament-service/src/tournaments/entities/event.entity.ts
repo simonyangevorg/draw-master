@@ -3,6 +3,7 @@ import {
 } from 'typeorm';
 import { TournamentEntity } from './tournament.entity';
 import type { DrawFormat } from './tournament.entity';
+import { RuleSet } from '../rules';
 
 export type EventCategory = 'MEN' | 'WOMEN' | 'MIXED' | 'OPEN';
 export type EventDiscipline = 'SINGLES' | 'DOUBLES';
@@ -13,8 +14,7 @@ export type EventStatus = 'DRAFT' | 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANC
  * Singles"... Each event has its own format, entries, draw and (F-12)
  * champion. The tournament's status rolls up from its events.
  *
- * Match rules (setsToWin ... noAd) live here until F-05 turns them into
- * per-stage rule sets.
+ * Match rules are per stage (F-05): groupRules, knockoutRules, finalRules.
  */
 @Entity('events')
 export class EventEntity {
@@ -65,21 +65,21 @@ export class EventEntity {
   @Column({ type: 'int', nullable: true })
   advancePerGroup: number | null;
 
-  // ── Match rules (until F-05) ──
-  @Column({ default: 2 })
-  setsToWin: number;
+  // ── Match rules per stage (F-05) ──
+  // Copies, not references: changing a club preset never changes an event,
+  // and an event's rules are locked once its draw is made.
 
-  @Column({ default: 6 })
-  gamesPerSet: number;
+  /** Round robin and the group stage. */
+  @Column({ type: 'jsonb' })
+  groupRules: RuleSet;
 
-  @Column({ default: 6 })
-  tiebreakAt: number;
+  /** Every knockout match except the final (when finalRules is set). */
+  @Column({ type: 'jsonb' })
+  knockoutRules: RuleSet;
 
-  @Column({ default: false })
-  finalSetTiebreak: boolean;
-
-  @Column({ default: false })
-  noAd: boolean;
+  /** Optional: different rules for the final. */
+  @Column({ type: 'jsonb', nullable: true })
+  finalRules: RuleSet | null;
 
   @CreateDateColumn()
   createdAt: Date;
