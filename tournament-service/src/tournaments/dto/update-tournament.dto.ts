@@ -3,14 +3,7 @@ import {
   IsIn, IsDateString, IsNotEmpty, MaxLength, Min, Max,
 } from 'class-validator';
 import { Trim, IsNotPastDate } from './validators';
-import { SUPPORTED_TYPES, SUPPORTED_FORMATS, SURFACES, AGE_GROUPS } from './create-tournament.dto';
-
-/** Fields that shape the draw; only changeable while the tournament is a DRAFT. */
-export const FORMAT_FIELDS = [
-  'tournamentType', 'drawFormat', 'maxParticipants', 'minParticipants', 'seeded',
-  'setsToWin', 'gamesPerSet', 'tiebreakAt', 'finalSetTiebreak', 'noAd',
-  'numberOfGroups', 'advancePerGroup',
-] as const;
+import { SURFACES, AGE_GROUPS } from './formats';
 
 /**
  * What an owner may change with PATCH /tournaments/:id. Deliberately has no
@@ -19,7 +12,9 @@ export const FORMAT_FIELDS = [
  * The controller validates with forbidNonWhitelisted, so sending any of those
  * fields is a 400 rather than being silently applied.
  *
- * Rules that compare two fields (end vs start, deadline vs start, min vs max)
+ * Format, size, seeding and rules are per event: PATCH /tournaments/:id/events/:eid.
+ *
+ * Rules that compare two fields (end vs start, deadline vs start)
  * are checked in TournamentsService.update against the merged result, since a
  * PATCH usually carries only one side.
  */
@@ -70,35 +65,12 @@ export class UpdateTournamentDto {
   registrationDeadline?: string;
 
   @IsOptional()
-  @IsIn(SUPPORTED_TYPES)
-  tournamentType?: string;
-
-  @IsOptional()
-  @IsIn(SUPPORTED_FORMATS)
-  drawFormat?: string;
-
-  @IsOptional()
   @IsIn(SURFACES)
   surface?: string;
 
   @IsOptional()
   @IsIn(AGE_GROUPS)
   ageGroup?: string;
-
-  @IsOptional()
-  @IsInt()
-  @IsIn([8, 16, 32, 64])
-  maxParticipants?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(2)
-  @Max(64)
-  minParticipants?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  seeded?: boolean;
 
   @IsOptional()
   @IsIn(['CLUB', 'PUBLIC'])
@@ -123,39 +95,4 @@ export class UpdateTournamentDto {
   @Min(0)
   rankingPoints?: number;
 
-  @IsOptional()
-  @IsInt()
-  @IsIn([1, 2, 3])
-  setsToWin?: number;
-
-  @IsOptional()
-  @IsInt()
-  @IsIn([4, 6])
-  gamesPerSet?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(12)
-  tiebreakAt?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  finalSetTiebreak?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  noAd?: boolean;
-
-  @IsOptional()
-  @IsInt()
-  @Min(2)
-  @Max(8)
-  numberOfGroups?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(4)
-  advancePerGroup?: number;
 }

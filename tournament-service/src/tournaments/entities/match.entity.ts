@@ -1,5 +1,5 @@
 import {
-  Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn,
+  Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, Index,
 } from 'typeorm';
 import { TournamentEntity } from './tournament.entity';
 
@@ -17,6 +17,11 @@ export class TournamentMatchEntity {
   @ManyToOne(() => TournamentEntity, (t) => t.matches, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tournamentId' })
   tournament: TournamentEntity;
+
+  /** The event this belongs to (F-01). */
+  @Index()
+  @Column()
+  eventId: string;
 
   @Column({ type: 'varchar', default: 'KNOCKOUT' })
   stage: MatchStage;

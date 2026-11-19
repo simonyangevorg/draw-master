@@ -5,6 +5,7 @@ import {
 import { ParticipantEntity } from './participant.entity';
 import { TournamentMatchEntity } from './match.entity';
 import { TournamentGroupEntity } from './group.entity';
+import { EventEntity } from './event.entity';
 
 export type TournamentStatus = 'DRAFT' | 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 export type TournamentType = 'SINGLES_MEN' | 'SINGLES_WOMEN' | 'DOUBLES_MEN' | 'DOUBLES_WOMEN' | 'MIXED_DOUBLES';
@@ -73,51 +74,14 @@ export class TournamentEntity {
   @Column({ nullable: true })
   rankingPoints: number;
 
-  // ── Type & format ──
-  @Column({ type: 'varchar' })
-  tournamentType: TournamentType;
-
-  @Column({ type: 'varchar' })
-  drawFormat: DrawFormat;
-
+  // ── Venue ──
   @Column({ type: 'varchar', default: 'CLAY' })
   surface: Surface;
 
   @Column({ type: 'varchar', default: 'OPEN' })
   ageGroup: AgeGroup;
 
-  // ── Participants ──
-  @Column({ default: 32 })
-  maxParticipants: number;
-
-  @Column({ default: 4 })
-  minParticipants: number;
-
-  @Column({ default: true })
-  seeded: boolean;
-
-  // ── Match format ──
-  @Column({ default: 2 })
-  setsToWin: number;          // 1 = best of 1, 2 = best of 3, 3 = best of 5
-
-  @Column({ default: 6 })
-  gamesPerSet: number;
-
-  @Column({ default: 6 })
-  tiebreakAt: number;
-
-  @Column({ default: false })
-  finalSetTiebreak: boolean;
-
-  @Column({ default: false })
-  noAd: boolean;
-
-  // ── Group stage ──
-  @Column({ nullable: true })
-  numberOfGroups: number;
-
-  @Column({ nullable: true })
-  advancePerGroup: number;
+  // Format, size, seeding, groups and match rules belong to each event (F-01).
 
   // ── Relations ──
   @OneToMany(() => ParticipantEntity, (p) => p.tournament, { cascade: true })
@@ -128,6 +92,9 @@ export class TournamentEntity {
 
   @OneToMany(() => TournamentGroupEntity, (g) => g.tournament, { cascade: true })
   groups: TournamentGroupEntity[];
+
+  @OneToMany(() => EventEntity, (e) => e.tournament, { cascade: true })
+  events: EventEntity[];
 
   @CreateDateColumn()
   createdAt: Date;

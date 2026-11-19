@@ -1,20 +1,17 @@
 import {
   IsString, IsOptional, IsBoolean, IsInt, IsNumber,
   IsIn, IsDateString, IsNotEmpty, IsUUID, MaxLength, Min, Max,
+  IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import {
   Trim, IsNotPastDate, IsOnOrAfterField, IsOnOrBeforeField, IsAtMostField,
 } from './validators';
 
-/**
- * What can be created today. Double Elimination and doubles/mixed exist in the
- * entity but aren't implemented (F-10, F-04); until they are, the API refuses
- * them rather than silently building a singles Single Elimination draw (B-17).
- */
-export const SUPPORTED_TYPES = ['SINGLES_MEN', 'SINGLES_WOMEN'];
-export const SUPPORTED_FORMATS = ['SINGLE_ELIMINATION', 'ROUND_ROBIN', 'GROUP_STAGE_KNOCKOUT'];
-export const SURFACES = ['CLAY', 'HARD_OUTDOOR', 'HARD_INDOOR', 'GRASS', 'CARPET', 'ACRYLIC', 'ARTIFICIAL_CLAY', 'ARTIFICIAL_GRASS'];
-export const AGE_GROUPS = ['OPEN', 'U18', 'U16', 'U14', 'SENIOR_40'];
+import { SUPPORTED_TYPES, SUPPORTED_FORMATS, SURFACES, AGE_GROUPS } from './formats';
+import { CreateEventDto } from './event.dto';
+
+export { SUPPORTED_TYPES, SUPPORTED_FORMATS, SURFACES, AGE_GROUPS };
 const NOT_YET = { message: '$property must be one of: $constraint1 (doubles and Double Elimination are not available yet)' };
 
 export class CreateTournamentDto {
@@ -66,11 +63,26 @@ export class CreateTournamentDto {
   @IsOnOrBeforeField('startDate')
   registrationDeadline?: string;
 
-  @IsIn(SUPPORTED_TYPES, NOT_YET)
-  tournamentType: string;
+  /**
+   * The events to run (F-01): Men's Singles, Women's Singles, ... At least one.
+   * Older clients may instead send one tournamentType + drawFormat (and the
+   * size/rule fields below), which becomes a single event.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => CreateEventDto)
+  events?: CreateEventDto[];
 
+  @IsOptional()
+  @IsIn(SUPPORTED_TYPES, NOT_YET)
+  tournamentType?: string;
+
+  @IsOptional()
   @IsIn(SUPPORTED_FORMATS, NOT_YET)
-  drawFormat: string;
+  drawFormat?: string;
 
   @IsIn(SURFACES)
   surface: string;

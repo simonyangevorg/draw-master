@@ -5,6 +5,7 @@ import { ParticipantEntity } from './tournaments/entities/participant.entity';
 import { TournamentMatchEntity } from './tournaments/entities/match.entity';
 import { TournamentGroupEntity } from './tournaments/entities/group.entity';
 import { ClubRefEntity } from './tournaments/entities/club-ref.entity';
+import { EventEntity } from './tournaments/entities/event.entity';
 import { MIGRATIONS } from './migrations';
 
 /**
@@ -16,7 +17,7 @@ import { MIGRATIONS } from './migrations';
 export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres',
   url: process.env.DATABASE_URL,
-  entities: [TournamentEntity, ParticipantEntity, TournamentMatchEntity, TournamentGroupEntity, ClubRefEntity],
+  entities: [TournamentEntity, ParticipantEntity, TournamentMatchEntity, TournamentGroupEntity, ClubRefEntity, EventEntity],
   migrations: MIGRATIONS,
   synchronize: false,
 };

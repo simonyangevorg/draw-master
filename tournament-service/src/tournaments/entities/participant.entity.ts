@@ -7,6 +7,8 @@ import { TournamentEntity } from './tournament.entity';
 export type ParticipantStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
 
 @Entity('participants')
+// A player enters each event once (F-01).
+@Index(['eventId', 'playerId'], { unique: true })
 export class ParticipantEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -17,6 +19,11 @@ export class ParticipantEntity {
   @ManyToOne(() => TournamentEntity, (t) => t.participants, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tournamentId' })
   tournament: TournamentEntity;
+
+  /** The event this belongs to (F-01). */
+  @Index()
+  @Column()
+  eventId: string;
 
   // Primary player (always required)
   @Index()

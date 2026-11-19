@@ -11,6 +11,7 @@ import { UpdateMatchDto } from './dto/update-match.dto';
 import { SwapDrawDto } from './dto/swap-draw.dto';
 import { AssignSeedDto } from './dto/assign-seed.dto';
 import { UpdateDrawSlotDto } from './dto/update-draw-slot.dto';
+import { CreateEventDto, EventRefDto, UpdateEventDto } from './dto/event.dto';
 import { JwtGuard } from '../auth/jwt.guard';
 import { CurrentUser, OptionalUser } from '../auth/current-user.decorator';
 
@@ -67,9 +68,19 @@ export class TournamentsController {
     return this.tournamentsService.getParticipants(id, user);
   }
 
+  /** The whole tournament's draw; each match carries its eventId. */
   @Get('tournaments/:id/draw')
   getDraw(@Param('id', ParseUUIDPipe) id: string, @OptionalUser() user: CurrentUser | null) {
     return this.tournamentsService.getDraw(id, user);
+  }
+
+  @Get('tournaments/:id/events/:eid/draw')
+  getEventDraw(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('eid', ParseUUIDPipe) eid: string,
+    @OptionalUser() user: CurrentUser | null,
+  ) {
+    return this.tournamentsService.getDraw(id, user, eid);
   }
 
   // ── Writes ───────────────────────────────
@@ -105,7 +116,54 @@ export class TournamentsController {
     return this.tournamentsService.open(id, user);
   }
 
+  // ── Events (F-01) ────────────────────────
+
+  @Post('tournaments/:id/events')
+  @HttpCode(201)
+  @UseGuards(JwtGuard)
+  addEvent(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateEventDto, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.addEvent(id, dto, user);
+  }
+
+  @Patch('tournaments/:id/events/:eid')
+  @UseGuards(JwtGuard)
+  updateEvent(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('eid', ParseUUIDPipe) eid: string,
+    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true })) dto: UpdateEventDto,
+    @CurrentUser() user: CurrentUser,
+  ) {
+    return this.tournamentsService.updateEvent(id, eid, dto, user);
+  }
+
+  @Delete('tournaments/:id/events/:eid')
+  @HttpCode(204)
+  @UseGuards(JwtGuard)
+  removeEvent(@Param('id', ParseUUIDPipe) id: string, @Param('eid', ParseUUIDPipe) eid: string, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.removeEvent(id, eid, user);
+  }
+
+  @Post('tournaments/:id/events/:eid/participants')
+  @HttpCode(201)
+  @UseGuards(JwtGuard)
+  enrollInEvent(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('eid', ParseUUIDPipe) eid: string,
+    @Body() dto: EnrollParticipantDto,
+    @CurrentUser() user: CurrentUser,
+  ) {
+    return this.tournamentsService.enroll(id, { ...dto, eventId: eid }, user);
+  }
+
+  @Post('tournaments/:id/events/:eid/draw')
+  @UseGuards(JwtGuard)
+  generateEventDraw(@Param('id', ParseUUIDPipe) id: string, @Param('eid', ParseUUIDPipe) eid: string, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.generateDraw(id, user, eid);
+  }
+
   // ── Participants ─────────────────────────
+  // (POST /tournaments/:id/participants takes eventId in the body, or none
+  // while the tournament has one event: the pre-F-01 route, kept as an alias.)
 
   @Post('tournaments/:id/participants')
   @HttpCode(201)
@@ -142,8 +200,8 @@ export class TournamentsController {
 
   @Post('tournaments/:id/draw')
   @UseGuards(JwtGuard)
-  generateDraw(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: CurrentUser) {
-    return this.tournamentsService.generateDraw(id, user);
+  generateDraw(@Param('id', ParseUUIDPipe) id: string, @Body() dto: EventRefDto, @CurrentUser() user: CurrentUser) {
+    return this.tournamentsService.generateDraw(id, user, dto?.eventId);
   }
 
   @Post('tournaments/:id/draw/swap')
