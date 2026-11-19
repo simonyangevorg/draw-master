@@ -15,6 +15,7 @@ import { UpdateRoleDto } from './dto/update-role.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtPayload } from './interfaces/user.interface';
 import { AuditLogger } from './audit-logger.service';
+import { normalizeEmail } from './dto/normalize';
 
 @Injectable()
 export class AuthService {
@@ -26,12 +27,13 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const existing = await this.usersRepo.findOne({ where: { email: dto.email } });
+    const email = normalizeEmail(dto.email) as string;
+    const existing = await this.usersRepo.findOne({ where: { email } });
     if (existing) throw new ConflictException('Email already registered');
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const user = this.usersRepo.create({
-      email: dto.email,
+      email,
       name: dto.name,
       role: dto.role ?? 'MEMBER',
       clubId: dto.clubId ?? null,
@@ -55,15 +57,16 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.usersRepo.findOne({ where: { email: dto.email } });
+    const email = normalizeEmail(dto.email) as string;
+    const user = await this.usersRepo.findOne({ where: { email } });
     if (!user) {
-      this.auditLogger.record({ actorId: null, action: 'LOGIN_FAILED', targetId: dto.email, reason: 'unknown_user' });
+      this.auditLogger.record({ actorId: null, action: 'LOGIN_FAILED', targetId: email, reason: 'unknown_user' });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) {
-      this.auditLogger.record({ actorId: user.id, action: 'LOGIN_FAILED', targetId: dto.email, reason: 'wrong_password' });
+      this.auditLogger.record({ actorId: user.id, action: 'LOGIN_FAILED', targetId: email, reason: 'wrong_password' });
       throw new UnauthorizedException('Invalid credentials');
     }
 

@@ -1,9 +1,12 @@
 import {
-  Entity, PrimaryGeneratedColumn, Column, CreateDateColumn,
+  Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index,
 } from 'typeorm';
 
 export type Role = 'ORGANISER' | 'MEMBER' | 'GUEST';
 
+// Case-insensitive uniqueness (B-12). An expression index TypeORM can't model,
+// so it lives in the EmailLowercase migration and is excluded from sync/diff.
+@Index('UQ_users_email_lower', { synchronize: false })
 @Entity('users')
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid')

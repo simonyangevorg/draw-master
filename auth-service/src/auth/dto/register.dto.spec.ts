@@ -34,3 +34,19 @@ describe('RegisterDto', () => {
     expect(errors.some((e) => e.property === 'role')).toBe(true);
   });
 });
+
+describe('RegisterDto normalisation (B-12, B-14)', () => {
+  it('trims and lower-cases the email', () => {
+    expect(makeDto({ email: '  Luca.Bianchi@Example.COM ' }).email).toBe('luca.bianchi@example.com');
+  });
+
+  it('rejects a whitespace-only name', async () => {
+    const errors = await validate(makeDto({ name: '     ' }));
+    expect(errors.some((e) => e.property === 'name')).toBe(true);
+  });
+
+  it('rejects a 5000-character name', async () => {
+    const errors = await validate(makeDto({ name: 'x'.repeat(5000) }));
+    expect(errors.some((e) => e.property === 'name')).toBe(true);
+  });
+});

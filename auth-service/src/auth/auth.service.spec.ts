@@ -80,9 +80,42 @@ describe('AuthService', () => {
 
       expect(result.user).not.toHaveProperty('passwordHash');
     });
+
+    // B-12
+    it('looks up and stores the email lower-cased, so a different casing is a 409', async () => {
+      mockUsersRepo.findOne.mockImplementation(async ({ where }) =>
+        where.email === 'luca.bianchi@example.com' ? makeUser() : null);
+
+      await expect(
+        service.register({ email: '  Luca.Bianchi@Example.com ', name: 'Luca', password: 'password123' }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('saves a new account with the normalised email', async () => {
+      mockUsersRepo.findOne.mockResolvedValue(null);
+      mockUsersRepo.create.mockImplementation((data) => data);
+      mockUsersRepo.save.mockImplementation(async (u) => u);
+      mockJwtService.sign.mockReturnValue('signed-token');
+
+      await service.register({ email: 'New.User@Example.COM', name: 'New User', password: 'password123' });
+
+      expect(mockUsersRepo.create).toHaveBeenCalledWith(expect.objectContaining({ email: 'new.user@example.com' }));
+    });
   });
 
   describe('login', () => {
+    // B-12
+    it('logs in whatever casing the email is typed in', async () => {
+      const hash = await bcrypt.hash('correct-password', 10);
+      mockUsersRepo.findOne.mockImplementation(async ({ where }) =>
+        where.email === 'existing@example.com' ? makeUser({ passwordHash: hash }) : null);
+      mockJwtService.sign.mockReturnValue('signed-token');
+
+      const result = await service.login({ email: 'EXISTING@Example.com', password: 'correct-password' });
+
+      expect(result.token).toBe('signed-token');
+    });
+
     it('throws UnauthorizedException for an unknown user', async () => {
       mockUsersRepo.findOne.mockResolvedValue(null);
 
